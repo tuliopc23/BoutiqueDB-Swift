@@ -1,0 +1,12 @@
+.build/
+.swiftpm/
+*.xcodeproj
+xcuserdata/
+.DS_Store
+*.db
+*.db-*
+/tmp/
+
+# Built Turso binaries (regenerate with ./Scripts/build-turso.sh)
+Vendor/turso/lib/
+Vendor/TursoSQLite3.xcframework/

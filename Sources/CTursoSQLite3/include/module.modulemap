@@ -1,0 +1,5 @@
+module CTursoSQLite3 {
+  header "sqlite3.h"
+  header "turso_compat.h"
+  export *
+}
