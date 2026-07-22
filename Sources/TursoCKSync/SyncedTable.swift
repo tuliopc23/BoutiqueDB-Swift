@@ -76,6 +76,9 @@ public enum TursoCKSyncError: Error, Sendable, Equatable, LocalizedError {
   case unsupportedColumnType(table: String, column: String, type: String)
   case incompatibleSchemaMigration(table: String, reason: String)
   case unresolvedPrimaryKey(table: String, changeID: Int64)
+  case assetReadFailed(field: String, message: String)
+  case unsupportedRemoteValue(field: String, type: String)
+  case invalidTransportMetadata(String)
 
   public var errorDescription: String? {
     switch self {
@@ -101,6 +104,12 @@ public enum TursoCKSyncError: Error, Sendable, Equatable, LocalizedError {
       return "Synced table '\(table)' changed incompatibly: \(reason)"
     case .unresolvedPrimaryKey(let table, let changeID):
       return "Cannot resolve the primary key for '\(table)' CDC change \(changeID)"
+    case .assetReadFailed(let field, let message):
+      return "Cannot read CloudKit asset for field '\(field)': \(message)"
+    case .unsupportedRemoteValue(let field, let type):
+      return "Unsupported CloudKit value type '\(type)' for field '\(field)'"
+    case .invalidTransportMetadata(let message):
+      return "Invalid remote transport metadata: \(message)"
     }
   }
 }

@@ -38,8 +38,10 @@ BUILD_ROOT="$ROOT/.build/turso-xcframework"
 HEADERS="$BUILD_ROOT/headers"
 MACOS_MIN="${MACOS_DEPLOYMENT_TARGET:-14.0}"
 IOS_MIN="${IPHONEOS_DEPLOYMENT_TARGET:-17.0}"
-# Reuse engine target/ by default (faster incremental). Set ISOLATED_CARGO=1 to use BUILD_ROOT/cargo.
-ISOLATED_CARGO="${ISOLATED_CARGO:-0}"
+# Each target gets an isolated Cargo directory. Reusing a target directory can
+# retain objects built with a different Apple deployment target and produce an
+# XCFramework that links locally but fails for consumers on the declared floor.
+ISOLATED_CARGO="${ISOLATED_CARGO:-1}"
 
 rm -rf "$BUILD_ROOT" "$OUT_XCFW"
 mkdir -p "$HEADERS"
@@ -226,6 +228,72 @@ if [[ "$SLICES_RAW" == "all" || "$SLICES_RAW" == "spi" || "$SLICES_RAW" == "full
     exit 1
   fi
 fi
+
+version_lte() {
+  awk -v actual="$1" -v ceiling="$2" '
+    BEGIN {
+      split(actual, a, ".")
+      split(ceiling, c, ".")
+      for (i = 1; i <= 3; i++) {
+        av = (a[i] == "" ? 0 : a[i])
+        cv = (c[i] == "" ? 0 : c[i])
+        if (av < cv) exit 0
+        if (av > cv) exit 1
+      }
+      exit 0
+    }
+  '
+}
+
+VERIFY_ROOT="$(mktemp -d)"
+trap 'rm -rf "$VERIFY_ROOT"' EXIT
+
+verify_archive_deployment() {
+  local archive="$1"
+  local ceiling="$2"
+  local label="$3"
+  local arch thin members object info minos checked=0
+
+  for arch in $(lipo -archs "$archive"); do
+    thin="$VERIFY_ROOT/${label}-${arch}.a"
+    if [[ "$(lipo -archs "$archive" | wc -w | tr -d ' ')" == "1" ]]; then
+      cp "$archive" "$thin"
+    else
+      lipo -thin "$arch" "$archive" -output "$thin"
+    fi
+    members="$VERIFY_ROOT/${label}-${arch}"
+    mkdir -p "$members"
+    (cd "$members" && ar -x "$thin")
+
+    while IFS= read -r object; do
+      info="$(xcrun vtool -show-build "$object" 2>/dev/null || true)"
+      minos="$(printf '%s\n' "$info" | awk '/minos/{print $2; exit}')"
+      [[ -z "$minos" ]] && continue
+      checked=$((checked + 1))
+      if ! version_lte "$minos" "$ceiling"; then
+        echo "$label/$arch contains $(basename "$object") targeting $minos (maximum $ceiling)" >&2
+        exit 1
+      fi
+    done < <(find "$members" -type f)
+  done
+
+  if [[ "$checked" -eq 0 ]]; then
+    echo "No Mach-O deployment metadata found in $label" >&2
+    exit 1
+  fi
+  echo "Verified $checked object members in $label at deployment target <= $ceiling"
+}
+
+echo "==> Verifying every archive member deployment target"
+[[ -f "$OUT_XCFW/macos-arm64_x86_64/libturso_sdk_kit.a" ]] \
+  && verify_archive_deployment \
+    "$OUT_XCFW/macos-arm64_x86_64/libturso_sdk_kit.a" "$MACOS_MIN" macos
+[[ -f "$OUT_XCFW/ios-arm64/libturso_sdk_kit.a" ]] \
+  && verify_archive_deployment \
+    "$OUT_XCFW/ios-arm64/libturso_sdk_kit.a" "$IOS_MIN" ios-device
+[[ -f "$OUT_XCFW/ios-arm64_x86_64-simulator/libturso_sdk_kit.a" ]] \
+  && verify_archive_deployment \
+    "$OUT_XCFW/ios-arm64_x86_64-simulator/libturso_sdk_kit.a" "$IOS_MIN" ios-simulator
 
 ZIP="$ROOT/Vendor/TursoSDK.xcframework.zip"
 rm -f "$ZIP"

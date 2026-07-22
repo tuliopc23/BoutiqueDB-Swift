@@ -137,6 +137,8 @@ public final class TursoStore {
 @Observable
 public final class TursoQueryBox<Value> {
   public private(set) var value: Value
+  /// Latest refresh failure. A successful refresh clears it.
+  public private(set) var fetchError: String?
 
   private let store: TursoStore
   private let fetch: () throws -> Value
@@ -162,8 +164,12 @@ public final class TursoQueryBox<Value> {
 
   public func forceRefresh() {
     lastGeneration = store.generation
-    if let next = try? fetch() {
+    do {
+      let next = try fetch()
       value = next
+      fetchError = nil
+    } catch {
+      fetchError = String(describing: error)
     }
   }
 

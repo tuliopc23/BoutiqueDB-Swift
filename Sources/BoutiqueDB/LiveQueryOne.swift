@@ -4,7 +4,7 @@ import StructuredQueries
 import StructuredQueriesCore
 import StructuredQueriesTurso
 
-/// A SwiftUI/``@Observable``-friendly property wrapper that keeps an optional
+/// A SwiftUI/`@Observable`-friendly property wrapper that keeps an optional
 /// single row up to date by observing the database change stream.
 ///
 /// ```swift
@@ -50,7 +50,7 @@ where Element == Element.QueryOutput {
     refreshTask?.cancel()
   }
 
-  /// Replace the query factory and reload (parity with ``LiveQuery/setQuery``).
+  /// Replace the query factory and reload (parity with ``LiveQuery/setQuery(_:)``).
   public func setQuery(_ query: @escaping @Sendable () -> SelectOf<Element>) {
     self.query = query
     queryRevision &+= 1

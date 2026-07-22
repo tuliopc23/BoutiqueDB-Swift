@@ -1,4 +1,5 @@
 import Foundation
+import TursoCKSync
 
 /// Types that can emit Turso DDL for `BoutiqueDB.create`.
 ///
@@ -41,6 +42,32 @@ public struct BoutiqueColumnSpec: Sendable, Equatable {
     self.isNullable = isNullable
     self.isPrimaryKey = isPrimaryKey
     self.generatedExpression = generatedExpression
+  }
+}
+
+extension SyncedTable {
+  /// Derives CloudKit table metadata from the same typed column descriptor used
+  /// by migrations and additive schema synchronization.
+  public init<S: BoutiqueSchemaColumns>(
+    schema: S.Type,
+    recordType: String? = nil
+  ) throws {
+    let primaryKeys = S.boutiqueColumns.filter(\.isPrimaryKey)
+    guard primaryKeys.count == 1, let primaryKey = primaryKeys.first else {
+      throw TursoCKSyncError.primaryKeyRequired(
+        table: S.boutiqueTableName,
+        column: primaryKeys.first?.name ?? "id"
+      )
+    }
+    let synchronizedColumns = S.boutiqueColumns
+      .filter { !$0.isPrimaryKey && $0.generatedExpression == nil }
+      .map(\.name)
+    self.init(
+      name: S.boutiqueTableName,
+      primaryKeyColumn: primaryKey.name,
+      columns: synchronizedColumns,
+      recordType: recordType
+    )
   }
 }
 

@@ -16,19 +16,23 @@ struct MigrationTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let plan = BoutiqueMigrationPlan {
-      BoutiqueMigration("v1_create_items") { db in
-        try await db.execute(
-          """
-          CREATE TABLE items (
-            id TEXT PRIMARY KEY NOT NULL,
-            title TEXT NOT NULL
+      BoutiqueMigration(
+        "v1_create_items",
+        asynchronous: { db in
+          try await db.execute(
+            """
+            CREATE TABLE items (
+              id TEXT PRIMARY KEY NOT NULL,
+              title TEXT NOT NULL
+            )
+            """
           )
-          """
-        )
-      }
-      BoutiqueMigration("v2_add_body") { db in
-        try await db.ensureColumn(table: "items", name: "body", sqlType: "TEXT", default: "''")
-      }
+        })
+      BoutiqueMigration(
+        "v2_add_body",
+        asynchronous: { db in
+          try await db.ensureColumn(table: "items", name: "body", sqlType: "TEXT", default: "''")
+        })
     }
 
     let db1 = try await BoutiqueDB.open(
@@ -70,9 +74,11 @@ struct MigrationTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let v1 = BoutiqueMigrationPlan {
-      BoutiqueMigration("v1") { db in
-        try await db.execute("CREATE TABLE t (id TEXT PRIMARY KEY NOT NULL)")
-      }
+      BoutiqueMigration(
+        "v1",
+        asynchronous: { db in
+          try await db.execute("CREATE TABLE t (id TEXT PRIMARY KEY NOT NULL)")
+        })
     }
     _ = try await BoutiqueDB.open(url: url, startListening: false, migrations: v1)
 
@@ -80,9 +86,11 @@ struct MigrationTests {
       BoutiqueMigration("v1") { _ in
         Issue.record("v1 should not re-run")
       }
-      BoutiqueMigration("v2") { db in
-        try await db.ensureColumn(table: "t", name: "n", sqlType: "INTEGER", default: "0")
-      }
+      BoutiqueMigration(
+        "v2",
+        asynchronous: { db in
+          try await db.ensureColumn(table: "t", name: "n", sqlType: "INTEGER", default: "0")
+        })
     }
     let db = try await BoutiqueDB.open(url: url, startListening: false, migrations: v2)
     defer { db.close() }
@@ -95,9 +103,11 @@ struct MigrationTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let plan = BoutiqueMigrationPlan {
-      BoutiqueMigration("bad") { db in
-        try await db.execute("THIS IS NOT SQL")
-      }
+      BoutiqueMigration(
+        "bad",
+        asynchronous: { db in
+          try await db.execute("THIS IS NOT SQL")
+        })
     }
     let db = try BoutiqueDB(url: url, startListening: false)
     defer { db.close() }
@@ -157,9 +167,11 @@ struct MigrationTests {
     }
 
     let plan = BoutiqueMigrationPlan {
-      BoutiqueMigration("create_notes") { db in
-        try await db.create(NotesSchema.self)
-      }
+      BoutiqueMigration(
+        "create_notes",
+        asynchronous: { db in
+          try await db.create(NotesSchema.self)
+        })
     }
     let db = try await BoutiqueDB.open(url: url, startListening: false, migrations: plan)
     defer { db.close() }
@@ -175,8 +187,8 @@ struct MigrationTests {
       try? FileManager.default.removeItem(at: url)
     }
     let plan = BoutiqueMigrationPlan {
-      BoutiqueMigration("duplicate", transaction: { _ in })
-      BoutiqueMigration("duplicate", transaction: { _ in })
+      BoutiqueMigration("duplicate") { _ in }
+      BoutiqueMigration("duplicate") { _ in }
     }
     await #expect(throws: BoutiqueError.self) {
       try await db.migrate(using: plan)
@@ -192,12 +204,10 @@ struct MigrationTests {
       try? FileManager.default.removeItem(at: url)
     }
     let plan = BoutiqueMigrationPlan {
-      BoutiqueMigration(
-        "atomic",
-        transaction: { connection in
-          try connection.execute("CREATE TABLE atomic_items (id INTEGER PRIMARY KEY)")
-          try connection.execute("THIS IS NOT SQL")
-        })
+      BoutiqueMigration("atomic") { connection in
+        try connection.execute("CREATE TABLE atomic_items (id INTEGER PRIMARY KEY)")
+        try connection.execute("THIS IS NOT SQL")
+      }
     }
     await #expect(throws: BoutiqueError.self) {
       try await db.migrate(using: plan)
@@ -209,12 +219,10 @@ struct MigrationTests {
   @Test func appliedMigrationHistoryCannotBeReordered() async throws {
     let url = tempURL()
     let initial = BoutiqueMigrationPlan {
-      BoutiqueMigration(
-        "v1",
-        transaction: { connection in
-          try connection.execute("CREATE TABLE history_items (id INTEGER PRIMARY KEY)")
-        })
-      BoutiqueMigration("v2", transaction: { _ in })
+      BoutiqueMigration("v1") { connection in
+        try connection.execute("CREATE TABLE history_items (id INTEGER PRIMARY KEY)")
+      }
+      BoutiqueMigration("v2") { _ in }
     }
     let db = try await BoutiqueDB.open(url: url, startListening: false, migrations: initial)
     defer { db.close() }
@@ -223,8 +231,8 @@ struct MigrationTests {
       try? FileManager.default.removeItem(at: url)
     }
     let reordered = BoutiqueMigrationPlan {
-      BoutiqueMigration("v2", transaction: { _ in })
-      BoutiqueMigration("v1", transaction: { _ in })
+      BoutiqueMigration("v2") { _ in }
+      BoutiqueMigration("v1") { _ in }
     }
     await #expect(throws: BoutiqueError.self) {
       try await db.migrate(using: reordered)

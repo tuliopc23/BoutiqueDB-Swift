@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    name: Multi-arch xcframework + GitHub Release
+    name: Validate package + GitHub Release
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -18,18 +18,32 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
 
+      - name: Release metadata
+        id: release
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG_VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install Rust
+        if: steps.release.outputs.prerelease == 'false'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
 
       - name: Checkout engine
+        if: steps.release.outputs.prerelease == 'false'
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/BoutiqueDB
           path: engine
 
       - name: Build full multi-arch TursoSDK
+        if: steps.release.outputs.prerelease == 'false'
         env:
           TURSO_SRC: ${{ github.workspace }}/engine
         run: |
@@ -41,6 +55,7 @@ jobs:
           find Vendor/TursoSDK.xcframework -type d -name 'macos-*' | head -1 | grep -q .
 
       - name: Checksum
+        if: steps.release.outputs.prerelease == 'false'
         id: sum
         run: |
           SUM=$(swift package compute-checksum Vendor/TursoSDK.xcframework.zip)
@@ -52,7 +67,35 @@ jobs:
           grep -Fq "let tursoSDKVersion = \"$TAG_VERSION\"" Package.swift
           grep -Fq "let tursoSDKChecksum = \"$SUM\"" Package.swift
 
-      - name: Create GitHub Release
+      - name: Build with warnings as errors
+        run: swift build -Xswiftc -warnings-as-errors
+
+      - name: Test
+        run: swift test
+
+      - name: Strict format lint
+        run: swift format lint --strict --recursive Sources Tests Package.swift
+
+      - name: Build DocC
+        run: ./Scripts/build-docs.sh
+
+      - name: Build clean consumer fixture
+        working-directory: Examples/Consumer
+        run: swift build -Xswiftc -warnings-as-errors
+
+      - name: Build iOS Simulator product
+        run: |
+          xcodebuild -scheme BoutiqueDB-Package \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath .build/DerivedData-release-ios \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
+            build
+
+      - name: Create stable GitHub Release
+        if: steps.release.outputs.prerelease == 'false'
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -66,9 +109,32 @@ jobs:
 
             Install:
             ```swift
-            .package(url: "https://github.com/${{ github.repository }}.git", from: "${{ steps.sum.outputs.version }}")
+            .package(url: "https://github.com/${{ github.repository }}.git", from: "${{ steps.release.outputs.version }}")
             ```
 
             Platforms: iOS 17+, macOS 14+. No `unsafeFlags`.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create beta GitHub Release
+        if: steps.release.outputs.prerelease == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            BoutiqueDB `${{ github.ref_name }}` production-beta package.
+
+            The package reuses the verified multi-architecture TursoSDK binary version declared
+            in `Package.swift`. CloudKit behavior is offline-tested; production-container push,
+            account-switch, and two-device convergence remain physical-device release gates.
+
+            Install:
+            ```swift
+            .package(
+              url: "https://github.com/${{ github.repository }}.git",
+              exact: "${{ steps.release.outputs.version }}"
+            )
+            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

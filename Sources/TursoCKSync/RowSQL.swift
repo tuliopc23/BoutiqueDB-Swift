@@ -34,7 +34,8 @@ enum RowSQL {
 
     let placeholders = Array(repeating: "?", count: columns.count).joined(separator: ", ")
     let columnList = columns.map(quoteIdent).joined(separator: ", ")
-    let updates = columns
+    let updates =
+      columns
       .filter { $0 != table.primaryKeyColumn }
       .map { "\(quoteIdent($0)) = excluded.\(quoteIdent($0))" }
       .joined(separator: ", ")

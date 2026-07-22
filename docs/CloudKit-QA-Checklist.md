@@ -4,9 +4,9 @@ Use this for release candidates. Automated tests cover the offline path (`enable
 
 ## Prerequisites
 
-- [ ] Two simulators or devices signed into the **same** iCloud test account
+- [ ] Two physical devices signed into the **same** iCloud test account
 - [ ] App has iCloud + CloudKit capability and a container ID matching `TursoCKSyncConfiguration.containerIdentifier`
-- [ ] Build embeds `libturso_sqlite3` with CDC enabled
+- [ ] Build links the packaged `TursoSDK.xcframework` and opens with CDC enabled
 - [ ] `enablesCloudKit: true` in the sample / QA build
 
 ## Happy path (two devices)

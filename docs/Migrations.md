@@ -7,7 +7,7 @@ BoutiqueDB follows the same production rules as **SQLiteData / GRDB**:
 3. **Never edit** a migration body after it has shipped.
 4. Prefer typed helpers (`create`, `ensureColumn`) over ad-hoc SQL when possible.
 5. Optional **additive-only** schema sync is for DEBUG / careful opt-in — not silent full auto-migrate.
-6. **Bodies must be idempotent.** DDL may auto-commit; a failed mid-body migration is **not** recorded, so retry re-runs the body. Use `IF NOT EXISTS` / `ensureColumn`. Prefer a single `db.write { … }` for multi-statement DML that should roll back together.
+6. The default synchronous closure is atomic with its tracking record. Use the explicitly labeled `asynchronous:` form only when suspension is unavoidable; asynchronous bodies must be idempotent because they cannot hold one native transaction across arbitrary suspension.
 
 ## Seamless open
 
@@ -28,15 +28,14 @@ enum AppMigrations {
   static let plan = BoutiqueMigrationPlan(
     eraseDatabaseOnSchemaChange: false  // true only in DEBUG if you want GRDB-style erase
   ) {
-    BoutiqueMigration("v1_create_notes") { db in
-      try await db.create(NoteSchema.self)  // BoutiqueSchema / @BoutiqueTable
+    BoutiqueMigration("v1_create_notes") { connection in
+      for statement in NoteSchema.boutiqueCreateStatements {
+        try connection.execute(statement)
+      }
     }
-    BoutiqueMigration("v2_add_updated_at") { db in
-      try await db.ensureColumn(
-        table: "notes",
-        name: "updatedAt",
-        sqlType: "TEXT",
-        default: "'1970-01-01T00:00:00Z'"
+    BoutiqueMigration("v2_add_updated_at") { connection in
+      try connection.execute(
+        "ALTER TABLE notes ADD COLUMN updatedAt TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'"
       )
     }
   }

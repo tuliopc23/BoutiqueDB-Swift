@@ -704,6 +704,89 @@ struct TursoCKSyncTests {
     _ = try await adapter.drainLocalChanges()
   }
 
+  @Test func transportNeutralRemoteRecordRoundTrip() async throws {
+    let (url, conn) = try makeConnection()
+    defer { try? FileManager.default.removeItem(at: url) }
+    defer { conn.close() }
+
+    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try engine.start(automaticallySync: false)
+    let adapter = CloudKitSyncAdapter(engine: engine)
+    let id = UUID().uuidString
+    try await adapter.applyRemoteChanges([
+      .upsert(
+        RemoteRecord(
+          recordName: "notes:\(id)",
+          recordType: "notes",
+          fields: [
+            "id": .string(id),
+            "title": .string("Neutral"),
+            "body": .string("payload"),
+            "updatedAt": .string("2026-07-22T00:00:00Z"),
+          ]
+        )
+      )
+    ])
+
+    #expect(
+      try conn.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])?["title"]?
+        .stringValue == "Neutral"
+    )
+    try await adapter.fetchChanges()
+    try await adapter.sendChanges()
+    try await adapter.syncChanges()
+
+    try await adapter.applyRemoteChanges([.delete(recordName: "notes:\(id)")])
+    #expect(try conn.queryOne("SELECT id FROM notes WHERE id = ?", [.text(id)]) == nil)
+  }
+
+  @Test func unreadableCloudKitAssetIsExplicitFailure() throws {
+    let (url, conn) = try makeConnection()
+    defer { try? FileManager.default.removeItem(at: url) }
+    defer { conn.close() }
+
+    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try engine.start(automaticallySync: false)
+    let id = UUID().uuidString
+    let record = CKRecord(
+      recordType: "notes",
+      recordID: CKRecord.ID(recordName: "notes:\(id)", zoneID: engine.zoneID)
+    )
+    record["title"] = CKAsset(
+      fileURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent("missing-asset-\(UUID().uuidString)")
+    )
+    record["body"] = "body"
+    record["updatedAt"] = "2026-07-22T00:00:00Z"
+
+    #expect(throws: TursoCKSyncError.self) {
+      try engine.applyRemoteRecord(record)
+    }
+  }
+
+  @Test func invalidTransportMetadataIsExplicitFailure() async throws {
+    let (url, conn) = try makeConnection()
+    defer { try? FileManager.default.removeItem(at: url) }
+    defer { conn.close() }
+
+    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try engine.start(automaticallySync: false)
+    let adapter = CloudKitSyncAdapter(engine: engine)
+
+    await #expect(throws: TursoCKSyncError.self) {
+      try await adapter.applyRemoteChanges([
+        .upsert(
+          RemoteRecord(
+            recordName: "notes:invalid-metadata",
+            recordType: "notes",
+            fields: [:],
+            transportMetadata: Data("not-an-archive".utf8)
+          )
+        )
+      ])
+    }
+  }
+
   @Test func wipePreservingDataReenqueues() throws {
     let (url, conn) = try makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }

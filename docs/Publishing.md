@@ -21,6 +21,7 @@ Never ship macOS-only binaries for SPI. See `AGENTS.md`.
 - [x] Public repo [BoutiqueDB-Swift](https://github.com/tuliopc23/BoutiqueDB-Swift)
 - [x] Multi-arch xcframework (macOS + iOS device + Simulator)
 - [x] Release `v0.2.1` + zip asset + checksum in `Package.swift`
+- [x] Production-beta source release `v0.3.0-beta.1` reusing the verified v0.2.1 binary
 - [ ] SPI “Add a Package” OAuth (owner): https://swiftpackageindex.com/add-a-package
 
 ## Build binary
@@ -38,20 +39,22 @@ swift package compute-checksum Vendor/TursoSDK.xcframework.zip
 ## Consumer install
 
 ```swift
-.package(url: "https://github.com/tuliopc23/BoutiqueDB-Swift.git", from: "0.2.1")
+.package(
+  url: "https://github.com/tuliopc23/BoutiqueDB-Swift.git",
+  exact: "0.3.0-beta.1"
+)
 ```
 
 ## Tag + release
 
-```bash
-git tag -a v0.2.1 -m "BoutiqueDB 0.2.1"
-git push public main --tags
+Prerelease tags reuse the already verified binary version declared in
+`Package.swift`; the release workflow runs source, test, DocC, consumer, and iOS
+gates before creating a GitHub prerelease. Stable tags rebuild and attach a new
+full multi-architecture engine archive.
 
-# Prefer attaching the local multi-arch zip (CI also builds SLICES=all):
-gh release create v0.2.1 Vendor/TursoSDK.xcframework.zip \
-  --repo tuliopc23/BoutiqueDB-Swift \
-  --title "0.2.1" \
-  --notes "See CHANGELOG.md"
+```bash
+git tag -a v0.3.0-beta.1 -m "BoutiqueDB 0.3.0-beta.1"
+git push public main v0.3.0-beta.1
 ```
 
 ## SPI

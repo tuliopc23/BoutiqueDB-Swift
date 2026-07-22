@@ -5,6 +5,7 @@ import StructuredQueriesTurso
 import Testing
 import TursoCKSync
 import TursoKit
+import TursoObservation
 
 @Table
 struct PRNote: Sendable {
@@ -63,14 +64,60 @@ struct ProdReadinessTests {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
     let plan = BoutiqueMigrationPlan {
-      BoutiqueMigration("v1") { db in
-        try await db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
-      }
+      BoutiqueMigration(
+        "v1",
+        asynchronous: { db in
+          try await db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        })
     }
     let db = try await BoutiqueDB.open(url: url, startListening: false, migrations: plan)
     defer { db.close() }
     let done = try await BoutiqueMigrator().hasCompletedMigrations(on: db, plan: plan)
     #expect(done)
+  }
+
+  @Test func defaultSynchronousMigrationIsAtomic() async throws {
+    let url = tempURL()
+    defer { try? FileManager.default.removeItem(at: url) }
+    enum Expected: Error { case stop }
+    let plan = BoutiqueMigrationPlan {
+      BoutiqueMigration("v1") { connection in
+        try connection.execute("CREATE TABLE atomic_default (id INTEGER PRIMARY KEY)")
+        throw Expected.stop
+      }
+    }
+    let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
+
+    await #expect(throws: BoutiqueError.self) {
+      try await db.migrate(using: plan)
+    }
+    let tableExists = try await db.tableExists("atomic_default")
+    let applied = try await db.appliedMigrations()
+    #expect(!tableExists)
+    #expect(applied.isEmpty)
+  }
+
+  @Test func syncedTableDerivesCanonicalSchemaMetadata() throws {
+    enum CanonicalNote: BoutiqueSchemaColumns {
+      static let boutiqueTableName = "canonical_notes"
+      static let boutiqueCreateStatements: [String] = []
+      static let boutiqueColumns = [
+        BoutiqueColumnSpec(name: "uuid", sqlType: "TEXT", isNullable: false, isPrimaryKey: true),
+        BoutiqueColumnSpec(name: "title", sqlType: "TEXT", isNullable: false),
+        BoutiqueColumnSpec(
+          name: "search_key",
+          sqlType: "TEXT",
+          generatedExpression: "lower(title)"
+        ),
+      ]
+    }
+
+    let table = try SyncedTable(schema: CanonicalNote.self)
+
+    #expect(table.name == "canonical_notes")
+    #expect(table.primaryKeyColumn == "uuid")
+    #expect(table.columns == ["title"])
   }
 
   @Test func schemaSyncEnsuresColumns() async throws {
@@ -113,6 +160,49 @@ struct ProdReadinessTests {
       try await db.beginConcurrent()
     }
     try await db.rollbackConcurrent()
+  }
+
+  @Test func capabilityProbeDoesNotEnableCDC() throws {
+    let url = tempURL()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let db = try BoutiqueDB(url: url, startListening: false, enableCDC: false)
+    defer { db.close() }
+
+    #expect(!db.capabilities.cdc)
+    #expect(
+      try db.unsafeConnection.queryOne(
+        "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'turso_cdc'"
+      ) == nil
+    )
+  }
+
+  @Test func capabilityProbeReportsConfiguredMVCC() throws {
+    let url = tempURL()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let db = try BoutiqueDB(
+      url: url,
+      startListening: false,
+      enableCDC: false,
+      concurrentWrites: true
+    )
+    defer { db.close() }
+
+    #expect(db.capabilities.mvcc)
+  }
+
+  @Test func queryBoxSurfacesRefreshFailure() throws {
+    let url = tempURL()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let connection = try TursoDatabase(url: url).connect(enableCDC: false)
+    defer { connection.close() }
+    let store = TursoStore(connection: connection)
+    enum Expected: Error { case failed }
+    let box = TursoQueryBox(store: store, initial: 1) { throw Expected.failed }
+
+    box.forceRefresh()
+
+    #expect(box.value == 1)
+    #expect(box.fetchError?.contains("failed") == true)
   }
 
   @Test func dropTableIfExists() async throws {
@@ -205,6 +295,10 @@ struct ProdReadinessTests {
     let conn = try TursoDatabase(url: url).connect(enableCDC: false)
     #expect(!conn.isApplyingRemoteChanges)
     conn.withSynchronizingFlag {
+      #expect(conn.isApplyingRemoteChanges)
+      conn.withSynchronizingFlag {
+        #expect(conn.isApplyingRemoteChanges)
+      }
       #expect(conn.isApplyingRemoteChanges)
     }
     #expect(!conn.isApplyingRemoteChanges)

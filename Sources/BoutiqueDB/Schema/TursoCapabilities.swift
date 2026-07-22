@@ -35,7 +35,8 @@ public struct TursoCapabilities: Sendable, Equatable {
     caps.cdc = probeCDC(on: connection)
     caps.generatedColumns = options?.experimentalFeatures.contains(.generatedColumns) == true
     caps.multiProcessWAL = options?.experimentalFeatures.contains(.multiprocessWAL) == true
-    caps.encryption = options?.experimentalFeatures.contains(.encryption) == true
+    caps.encryption =
+      options?.experimentalFeatures.contains(.encryption) == true
       && options?.encryptionCipher?.isEmpty == false
       && options?.encryptionHexKey?.isEmpty == false
 
@@ -46,37 +47,21 @@ public struct TursoCapabilities: Sendable, Equatable {
     caps.ftsIndex = probeFTS(on: connection)
     caps.vectorIndex = probeVectorIndex(on: connection)
     caps.materializedViews = probeMaterializedView(on: connection)
-    // MVCC cannot be safely probed on the CDC connection. BoutiqueDB verifies
-    // it when opening the dedicated concurrent-writer handle.
-    caps.mvcc = false
+    caps.mvcc = probeMVCC(on: connection)
 
     return caps
   }
 
   private static func probeCDC(on connection: TursoConnection) -> Bool {
-    do {
-      // Shared CDC table exists after enableCaptureDataChanges, or accept pragma.
-      try connection.execute("SAVEPOINT boutique_cdc_probe")
-      defer {
-        try? connection.execute("ROLLBACK TO boutique_cdc_probe")
-        try? connection.execute("RELEASE boutique_cdc_probe")
-      }
-      // If already enabled on this connection, turso_cdc is queryable.
-      if (try? connection.queryOne("SELECT 1 AS ok FROM sqlite_master WHERE name = 'turso_cdc'"))
-        != nil
-      {
-        return true
-      }
-      try connection.execute("PRAGMA capture_data_changes_conn('id')")
-      let ok =
-        (try? connection.queryOne(
-          "SELECT 1 AS ok FROM sqlite_master WHERE name = 'turso_cdc'"
-        )) != nil
-      try connection.execute("PRAGMA capture_data_changes_conn('off')")
-      return ok
-    } catch {
-      return false
-    }
+    // Capability inspection must never opt a connection into CDC as a side effect.
+    (try? connection.queryOne(
+      "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'turso_cdc'"
+    )) != nil
+  }
+
+  private static func probeMVCC(on connection: TursoConnection) -> Bool {
+    guard let row = try? connection.queryOne("PRAGMA journal_mode") else { return false }
+    return row.values.contains { $0.stringValue?.lowercased() == "mvcc" }
   }
 
   private static func probeFTS(on connection: TursoConnection) -> Bool {

@@ -16,7 +16,7 @@ struct Note: Sendable {
   var body: String
 }
 
-enum NotesSchema: BoutiqueSchema {
+enum NotesSchema: BoutiqueSchemaColumns {
   static var boutiqueTableName: String { "notes" }
   static var boutiqueCreateStatements: [String] {
     ["""
@@ -27,12 +27,21 @@ enum NotesSchema: BoutiqueSchema {
      )
      """]
   }
+  static var boutiqueColumns: [BoutiqueColumnSpec] {
+    [
+      BoutiqueColumnSpec(name: "id", sqlType: "TEXT", isNullable: false, isPrimaryKey: true),
+      BoutiqueColumnSpec(name: "title", sqlType: "TEXT", isNullable: false),
+      BoutiqueColumnSpec(name: "body", sqlType: "TEXT", isNullable: false),
+    ]
+  }
 }
 
 enum AppMigrations {
   static let plan = BoutiqueMigrationPlan {
-    BoutiqueMigration("v1_notes") { db in
-      try await db.create(NotesSchema.self)
+    BoutiqueMigration("v1_notes") { connection in
+      for statement in NotesSchema.boutiqueCreateStatements {
+        try connection.execute(statement)
+      }
     }
   }
 }
@@ -97,6 +106,7 @@ final class NotesModel {
 struct ContentView: View {
   @Dependency(\.boutiqueDB) var db
   @State private var model: NotesModel?
+  @State private var addError: String?
 
   var body: some View {
     List {
@@ -104,12 +114,23 @@ struct ContentView: View {
         Text(note.title)
       }
     }
+    .alert("Could not add note", isPresented: .constant(addError != nil)) {
+      Button("OK") { addError = nil }
+    } message: {
+      Text(addError ?? "Unknown database error")
+    }
     .task {
       model = NotesModel(db: db)
     }
     .toolbar {
       Button("Add") {
-        Task { try? await model?.add("Untitled") }
+        Task {
+          do {
+            try await model?.add("Untitled")
+          } catch {
+            addError = String(describing: error)
+          }
+        }
       }
     }
   }
@@ -121,9 +142,9 @@ struct ContentView: View {
 ```swift
 let sync = try BoutiqueDBSyncEngine(
   db: db,
-  syncedTables: [SyncedTable(name: "notes", columns: ["title", "body"])],
+  syncedTables: [try SyncedTable(schema: NotesSchema.self)],
   enablesCloudKit: true
 )
-try sync.start()
+try await sync.start()
 sync.attach(to: db, automaticallyDrain: true)
 ```

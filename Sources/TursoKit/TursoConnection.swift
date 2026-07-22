@@ -266,13 +266,13 @@ public final class TursoConnection: @unchecked Sendable {
   // MARK: - Cooperative async (official `async_io` + TURSO_IO)
 
   /// Async execute: drives ``TURSO_IO`` with `await Task.yield()` between IO ticks.
-  public func executeAsync(_ sql: String, _ bindings: [TursoValue] = []) async throws {
+  package func executeAsync(_ sql: String, _ bindings: [TursoValue] = []) async throws {
     try await withLockAsync {
       try await executeUnlockedAsync(sql, bindings)
     }
   }
 
-  public func queryAsync(
+  package func queryAsync(
     _ sql: String,
     _ bindings: [TursoValue] = []
   ) async throws -> [[String: TursoValue]] {
@@ -281,7 +281,7 @@ public final class TursoConnection: @unchecked Sendable {
     }
   }
 
-  public func writeAsync<T: Sendable>(
+  package func writeAsync<T: Sendable>(
     _ body: @Sendable () async throws -> T
   ) async throws -> T {
     try await withLockAsync {
@@ -301,7 +301,7 @@ public final class TursoConnection: @unchecked Sendable {
     }
   }
 
-  public func readAsync<T: Sendable>(
+  package func readAsync<T: Sendable>(
     _ body: @Sendable () async throws -> T
   ) async throws -> T {
     try await withLockAsync {
@@ -321,7 +321,7 @@ public final class TursoConnection: @unchecked Sendable {
     }
   }
 
-  public func writeConcurrentAsync<T: Sendable>(
+  package func writeConcurrentAsync<T: Sendable>(
     _ body: @Sendable () async throws -> T
   ) async throws -> T {
     try await withLockAsync {

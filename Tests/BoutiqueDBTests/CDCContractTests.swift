@@ -103,7 +103,7 @@ struct CDCContractTests {
       syncedTables: [SyncedTable(name: "notes", columns: ["title"])],
       enablesCloudKit: false
     )
-    try sync.start(automaticallySync: false)
+    try await sync.start(automaticallySync: false)
     sync.attach(to: db, automaticallyDrain: true)
 
     try await db.write { conn in
@@ -114,5 +114,29 @@ struct CDCContractTests {
     }
 
     #expect(!sync.engine.pendingRecordZoneChanges.isEmpty)
+  }
+
+  @Test func disablingAutoDrainRemovesCommitObserver() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("cdc-detach-\(UUID().uuidString).db")
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let db = try BoutiqueDB(url: url, startListening: false, enableCDC: true)
+    defer { db.close() }
+    try await db.execute(
+      "CREATE TABLE notes (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL)"
+    )
+    let sync = try BoutiqueDBSyncEngine(
+      db: db,
+      syncedTables: [SyncedTable(name: "notes", columns: ["title"])],
+      enablesCloudKit: false
+    )
+    try await sync.start(automaticallySync: false)
+    sync.attach(to: db)
+    sync.attach(to: db, automaticallyDrain: false)
+
+    try await db.execute("INSERT INTO notes (id, title) VALUES ('detached', 'no drain')")
+
+    #expect(sync.engine.pendingRecordZoneChanges.isEmpty)
   }
 }

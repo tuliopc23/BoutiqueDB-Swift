@@ -22,7 +22,10 @@ Inspired by [SQLiteData](https://github.com/pointfreeco/sqlite-data) — without
 ```swift
 // Package.swift
 dependencies: [
-  .package(url: "https://github.com/tuliopc23/BoutiqueDB-Swift.git", from: "0.2.1"),
+  .package(
+    url: "https://github.com/tuliopc23/BoutiqueDB-Swift.git",
+    exact: "0.3.0-beta.1"
+  ),
 ],
 targets: [
   .target(
@@ -36,7 +39,10 @@ targets: [
 
 Xcode: **File → Add Package Dependencies…** → `https://github.com/tuliopc23/BoutiqueDB-Swift` → product **BoutiqueDB**.
 
-> **Engine binary:** SPM downloads multi-arch `TursoSDK.xcframework.zip` from GitHub Releases (macOS + iOS device + Simulator, sdk-kit, no `unsafeFlags`). Maintainers: `./Scripts/build-turso-sdk-xcframework.sh` (always full multi-arch by default).
+> **Engine binary:** This beta reuses the verified v0.2.1 multi-arch
+> `TursoSDK.xcframework.zip` from GitHub Releases (macOS + iOS device +
+> Simulator, sdk-kit, no `unsafeFlags`). Maintainers:
+> `./Scripts/build-turso-sdk-xcframework.sh` (always full multi-arch by default).
 
 ## Platforms
 
@@ -61,10 +67,12 @@ Xcode: **File → Add Package Dependencies…** → `https://github.com/tuliopc2
 import BoutiqueDB
 import StructuredQueries
 
-let db = try await BoutiqueDB.open(
+let configuration = BoutiqueDBConfiguration(
   url: try BoutiqueDB.applicationSupportURL(),
+  concurrentWrites: true,
   migrations: AppMigrations.plan
 )
+let db = try await BoutiqueDB.open(configuration)
 
 try await db.write { conn in
   try conn.execute(
@@ -99,16 +107,20 @@ let db = try BoutiqueDB(url: url, openOptions: .tursoEnhancedAsync)
 | Local CRUD + StructuredQueries | **Ready** |
 | LiveQuery / CDC observation | **Ready** |
 | Concurrent writes | **Ready** (CDC-safe) |
-| CloudKit sync | **Ready (offline-tested)** — live multi-device: validate in app |
+| CloudKit private sync | **Beta (offline-tested)** — physical-device production-container validation required |
+| CloudKit sharing/public DB | **Not included in this beta** |
 | Migrations | **Ready** |
 | FTS / vector index / MV | **Opt-in** via `TursoOpenOptions` (official `index_method` / `views`) |
 | Encryption / multi-process | **Opt-in** official tokens (experimental upstream; Data Protection still recommended) |
 
 ## CloudKit
 
-- Entitlements: iCloud + CloudKit container  
-- Attach: `BoutiqueDBSyncEngine.attach(to:automaticallyDrain: true)`  
+- Entitlements: iCloud + CloudKit container
+- Host capabilities: Push Notifications + `remote-notification` background mode
+- Container: explicit identifier or injected `CKContainer` (no fallback)
+- Attach: `BoutiqueDBSyncEngine.attach(to:automaticallyDrain: true)`
 - QA: [docs/CloudKit-QA-Checklist.md](docs/CloudKit-QA-Checklist.md)
+- Account switches preserve local rows and reset sync metadata; the host owns account UI/policy.
 
 ## Docs (prod-ready)
 
@@ -119,11 +131,13 @@ let db = try BoutiqueDB(url: url, openOptions: .tursoEnhancedAsync)
 | [Migrations](docs/Migrations.md) | Append-only schema |
 | [App-Template](docs/App-Template.md) | Safe app bootstrap |
 | [CloudKit QA](docs/CloudKit-QA-Checklist.md) | Sync checklist |
+| [DocC catalog](Sources/BoutiqueDB/BoutiqueDB.docc/BoutiqueDB.md) | API, sync, operations |
+| [Security policy](SECURITY.md) | Private vulnerability reporting and scope |
 
 ## Build engine (maintainers)
 
 ```bash
-# Requires Rust + Xcode; default slice: macos-arm64
+# Requires Rust + Xcode; defaults to all macOS/iOS device/simulator slices
 ./Scripts/build-turso-sdk-xcframework.sh
 
 # Then:

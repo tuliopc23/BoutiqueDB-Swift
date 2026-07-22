@@ -20,16 +20,18 @@ struct RefinementStressTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let plan = BoutiqueMigrationPlan {
-      BoutiqueMigration("v1") { db in
-        try await db.execute(
-          """
-          CREATE TABLE stressNotes (
-            id TEXT PRIMARY KEY NOT NULL,
-            title TEXT NOT NULL
+      BoutiqueMigration(
+        "v1",
+        asynchronous: { db in
+          try await db.execute(
+            """
+            CREATE TABLE stressNotes (
+              id TEXT PRIMARY KEY NOT NULL,
+              title TEXT NOT NULL
+            )
+            """
           )
-          """
-        )
-      }
+        })
     }
     let db = try await BoutiqueDB.open(
       url: url,

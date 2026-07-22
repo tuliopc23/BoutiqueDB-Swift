@@ -5,8 +5,8 @@ import StructuredQueriesCore
 import StructuredQueriesTurso
 import TursoKit
 
-/// A SwiftUI/``@Observable``-friendly property wrapper that keeps an array of
-/// ``Table`` rows up to date by observing the database change stream.
+/// A SwiftUI/`@Observable`-friendly property wrapper that keeps an array of
+/// `Table` rows up to date by observing the database change stream.
 @MainActor
 @Observable
 @propertyWrapper

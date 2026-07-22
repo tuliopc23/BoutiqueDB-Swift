@@ -79,7 +79,7 @@ var packageTargets: [Target] = [
   .testTarget(
     name: "BoutiqueDBTests",
     dependencies: [
-      "BoutiqueDB",
+      "BoutiqueDB", "TursoObservation",
       .product(name: "StructuredQueries", package: "swift-structured-queries"),
       .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
     ]
@@ -101,7 +101,8 @@ var packageTargets: [Target] = [
       "TursoObservation",
       "BoutiqueDBMacros",
       .product(name: "Dependencies", package: "swift-dependencies"),
-    ]
+    ],
+    resources: [.copy("BoutiqueDB.docc")]
   ),
 ]
 
@@ -119,7 +120,7 @@ let package = Package(
     .library(name: "TursoObservation", targets: ["TursoObservation"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/pointfreeco/swift-structured-queries", from: "0.33.0"),
+    .package(url: "https://github.com/pointfreeco/swift-structured-queries", from: "0.34.0"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.0.0"),
     .package(url: "https://github.com/pointfreeco/swift-snapshot-testing", from: "1.17.0"),
     .package(url: "https://github.com/pointfreeco/swift-macro-testing", from: "0.6.0"),

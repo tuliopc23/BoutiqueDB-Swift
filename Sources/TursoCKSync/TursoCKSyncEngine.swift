@@ -442,7 +442,7 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
       throw TursoError(code: -1, message: "Cannot resolve PK for \(record.recordID.recordName)")
     }
 
-    let row = RecordMapper.rowDictionary(from: record, table: table)
+    let row = try RecordMapper.rowDictionary(from: record, table: table)
     let systemFields = RecordMapper.encodeSystemFields(record)
     let cursorBefore = try metadata.loadCDCCursor()
 

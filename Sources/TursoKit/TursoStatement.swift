@@ -8,7 +8,10 @@ public enum TursoStepResult: Sendable, Equatable {
   case busy
 }
 
-public final class TursoStatement: @unchecked Sendable {
+/// A connection-bound statement. Statements are intentionally not `Sendable`:
+/// finish using one on the creating execution context before accessing the
+/// connection elsewhere.
+public final class TursoStatement {
   let handle: OpaquePointer
   private var finalized = false
   private let asyncIO: Bool

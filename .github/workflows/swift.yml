@@ -57,10 +57,20 @@ jobs:
           find Vendor/TursoSDK.xcframework -type d -name 'ios-*-simulator' | grep -q .
 
       - name: Build (macOS)
-        run: swift build
+        run: swift build -Xswiftc -warnings-as-errors
 
       - name: Test (macOS)
         run: swift test
+
+      - name: Strict format lint
+        run: swift format lint --strict --recursive Sources Tests Package.swift
+
+      - name: Build DocC
+        run: ./Scripts/build-docs.sh
+
+      - name: Build consumer fixture
+        working-directory: Examples/Consumer
+        run: swift build -Xswiftc -warnings-as-errors
 
   build-ios:
     name: iOS Simulator build

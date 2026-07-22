@@ -12,24 +12,27 @@ public struct BoutiqueMigration: Sendable {
     case asynchronous(@Sendable (BoutiqueDB) async throws -> Void)
   }
 
+  /// Creates an atomic migration. The migration body and tracking record commit
+  /// in the same transaction, making this the default form for synchronous work.
   public init(
     _ id: String,
-    migrate: @escaping @Sendable (BoutiqueDB) async throws -> Void
+    migrate: @escaping @Sendable (inout BoutiqueDBConnection) throws -> Void
+  ) {
+    self.id = id
+    self.body = .transactional(migrate)
+  }
+
+  /// Creates a suspending migration. Because a native transaction cannot remain
+  /// open across arbitrary suspension, this form must be idempotent. Prefer the
+  /// synchronous overload whenever possible.
+  public init(
+    _ id: String,
+    asynchronous migrate: @escaping @Sendable (BoutiqueDB) async throws -> Void
   ) {
     self.id = id
     self.body = .asynchronous(migrate)
   }
 
-  /// Creates a migration whose schema/data changes and tracking record commit
-  /// in one database transaction. Prefer this form whenever the migration can
-  /// be expressed through ``BoutiqueDBConnection``.
-  public init(
-    _ id: String,
-    transaction: @escaping @Sendable (inout BoutiqueDBConnection) throws -> Void
-  ) {
-    self.id = id
-    self.body = .transactional(transaction)
-  }
 }
 
 @resultBuilder

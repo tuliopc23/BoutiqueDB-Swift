@@ -2,10 +2,30 @@
 
 All notable changes to the **BoutiqueDB** Swift package are documented here.
 
-## Unreleased
+## 0.3.0-beta.1 — 2026-07-22
 
-### Planned
-- DocC polish and broader public docs
+### Added
+- One `BoutiqueDBConfiguration` value for all open/reopen/bootstrap paths
+- Durable CloudKit outbox restart recovery and acknowledgement cleanup
+- Transport-neutral remote sync envelopes and manual fetch/send/sync APIs
+- DocC catalog, compiling consumer fixture, and security policy
+
+### Fixed
+- Native database/connection lifetime and idempotent ordered shutdown
+- Atomic transactional migrations, append-only history validation, and safe debug erasure
+- Nested sync suppression, awaited account errors, explicit asset/value mapping failures
+- Latest-wins LiveQuery refreshes and observable CDC listener failures
+- CloudKit schema/identity/container validation, real client-wins retries, and inbound echo races
+- Per-target Cargo isolation and archive-member deployment-target verification
+- CDC-safe concurrent writes no longer attempt a live secondary-handle MVCC transition
+- Capability probing no longer enables CDC as a side effect; MVCC state is reported accurately
+- Query-box refresh failures and malformed transport metadata are observable
+
+### Changed
+- Low-level cooperative async connection APIs are package-scoped behind `DatabaseActor`
+- `TursoStatement` is intentionally non-`Sendable`
+- `@BoutiqueTable` emits additive column metadata and rejects unsupported stored types
+- Schema creation fails atomically when an optional capability is unavailable
 
 ## 0.2.1 — 2026-07-22
 

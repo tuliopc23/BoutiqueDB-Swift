@@ -5,15 +5,18 @@ import StructuredQueriesTurso
 import TursoKit
 import TursoObservation
 
-/// A high-level, ``@Observable``-friendly container for a local Turso database
+/// A high-level, `@Observable`-friendly container for a local Turso database
 /// with optional CloudKit sync.
 ///
-/// - Important: I/O runs on ``DatabaseActor``; this type stays `@MainActor` (BD-014).
-/// - Important: Prefer ``read`` / ``write`` / ``writeConcurrent`` — do not hold a
+/// - Important: I/O runs on `DatabaseActor`; this type stays `@MainActor` (BD-014).
+/// - Important: Prefer ``read(_:)`` / ``write(_:)`` /
+///   ``writeConcurrent(maxAttempts:_:)`` — do not hold a
 ///   long-lived raw connection outside those scopes.
-/// - Important: CDC capture is per-connection; the concurrent MVCC writer also
-///   enables CDC when the primary does, so changes land in shared `turso_cdc`
-///   and drain/LiveQuery stay correct (BD-005 dual-handle design).
+/// - Important: CDC capture and MVCC cannot safely be enabled on separate
+///   handles after a database is active. With CDC enabled,
+///   ``writeConcurrent(maxAttempts:_:)``
+///   therefore uses retrying `BEGIN IMMEDIATE` writes on the primary handle so
+///   changes always land in `turso_cdc` (BD-005 correctness fallback).
 @MainActor
 public final class BoutiqueDB: Sendable {
   public let url: URL
@@ -25,14 +28,9 @@ public final class BoutiqueDB: Sendable {
   public let capabilities: TursoCapabilities
   private let database: TursoDatabase
   private let databaseActor: DatabaseActor
-  /// When true, ``writeConcurrent`` opens/uses a dedicated MVCC connection (BD-005).
+  /// When true, ``writeConcurrent`` enables the safest supported contention path.
   private let wantsConcurrentWrites: Bool
   private let enableCDC: Bool
-  /// Optional second connection with MVCC for ``writeConcurrent`` (opened lazily).
-  private var concurrentActor: DatabaseActor?
-  private var concurrentConnection: TursoConnection?
-  /// Whether the concurrent writer connection has CDC capture enabled.
-  private var concurrentCapturesCDC = false
   /// Invoked after successful local commits (write / writeConcurrent / commitConcurrent).
   /// Attach a sync drain here (e.g. `BoutiqueDBSyncEngine` auto-drain).
   public var onLocalCommit: (@MainActor () throws -> Void)?
@@ -48,10 +46,11 @@ public final class BoutiqueDB: Sendable {
   ///   - url: Database file URL.
   ///   - startListening: When `true` (default), starts the cooperative CDC listener.
   ///   - enableCDC: When `true` (default), enables CDC on the primary connection.
-  ///   - concurrentWrites: When `true`, ``writeConcurrent`` uses a **second** MVCC
-  ///     connection so CDC observation stays on the primary handle (BD-005).
+  ///   - concurrentWrites: Enables ``writeConcurrent(maxAttempts:_:)``. With CDC,
+  ///     this is a retrying primary-handle write; without CDC, the primary handle
+  ///     uses MVCC.
   ///   - openOptions: Official Turso open flags (`experimental_features`, encryption, …).
-  ///     Defaults to ``TursoOpenOptions/tursoEnhanced`` (views + index_method + safe DDL flags).
+  ///     Defaults to `TursoOpenOptions.tursoEnhanced` (views + index_method + safe DDL flags).
   ///   - encryption: Optional engine encryption (maps to official cipher/hexkey + `encryption` token).
   ///   - multiProcess: Multi-process WAL (`multiprocess_wal` token). Requires App Group for extensions.
   public init(
@@ -100,8 +99,6 @@ public final class BoutiqueDB: Sendable {
       try connection.execute("PRAGMA journal_mode = mvcc")
     }
 
-    self.concurrentConnection = nil
-    self.concurrentActor = nil
     self.databaseActor = DatabaseActor(connection: connection)
     self.store = TursoStore(connection: connection)
     self.capabilities = TursoCapabilities.probe(on: connection)
@@ -129,51 +126,27 @@ public final class BoutiqueDB: Sendable {
   }
 
   /// Escape hatch for advanced callers that must touch the primary handle
-  /// (e.g. attaching ``TursoCKSyncEngine``). Prefer ``write`` / ``read``.
+  /// (e.g. attaching `TursoCKSyncEngine`). Prefer ``write(_:)`` / ``read(_:)``.
   public var unsafeConnection: TursoConnection { connection }
 
-  /// Opens the concurrent writer on first use (after schema exists).
+  /// Selects the safe contention strategy on first use.
   ///
   /// **Contract (A-001):** Concurrent commits must appear in `turso_cdc` when
   /// primary CDC is enabled, so LiveQuery + CloudKit drain stay correct.
   ///
-  /// Turso requires MVCC for `BEGIN CONCURRENT`, but CDC capture is often
-  /// incompatible on the same handle. Strategy:
-  /// 1. Try dedicated MVCC writer **with** CDC (best case: true concurrent + capture).
-  /// 2. If CDC cannot attach after MVCC, **close** that writer and use the
-  ///    primary CDC connection with busy-retry `BEGIN IMMEDIATE` writes instead
-  ///    of true concurrent (still correct for sync; no silent data loss).
-  private func ensureConcurrentActor() throws -> DatabaseActor {
-    if let concurrentActor { return concurrentActor }
+  /// Turso requires MVCC for `BEGIN CONCURRENT`. Enabling MVCC dynamically on a
+  /// second handle after the primary CDC connection is active can invalidate the
+  /// engine's page-to-table mapping. Until the engine supports that transition,
+  /// CDC databases always use primary-handle busy-retry `BEGIN IMMEDIATE` writes.
+  private func ensureConcurrentActor() async throws -> DatabaseActor {
     guard wantsConcurrentWrites else {
       throw BoutiqueError.featureUnavailable(
         "writeConcurrent requires concurrentWrites: true at init"
       )
     }
-    if !enableCDC {
-      // No CDC: true MVCC concurrent on primary (or dedicated handle).
-      return databaseActor
-    }
-
-    let writer = try database.connect(enableCDC: false)
-    try writer.execute("PRAGMA journal_mode = mvcc")
-    do {
-      try writer.enableCaptureDataChanges(mode: .full)
-      // Best case: concurrent + capture on dedicated handle.
-      concurrentCapturesCDC = true
-      let actor = DatabaseActor(connection: writer)
-      concurrentConnection = writer
-      concurrentActor = actor
-      return actor
-    } catch {
-      // Engine rejected CDC on MVCC handle — do not keep a silent non-capturing writer.
-      writer.close()
-      concurrentCapturesCDC = false
-      // Fall back to primary CDC connection (busy-retry IMMEDIATE, not BEGIN CONCURRENT).
-      concurrentActor = databaseActor
-      concurrentConnection = nil
-      return databaseActor
-    }
+    // When CDC is disabled, MVCC was enabled on the primary before schema access.
+    // When CDC is enabled, this same actor supplies the serialized retry path.
+    return databaseActor
   }
 
   private func notifyLocalCommit() {
@@ -210,9 +183,6 @@ public final class BoutiqueDB: Sendable {
     guard !closed else { return }
     closed = true
     store.stopListening()
-    concurrentConnection?.close()
-    concurrentConnection = nil
-    concurrentActor = nil
     connection.close()
     database.close()
     postCommitObservers.removeAll()
@@ -268,18 +238,17 @@ public final class BoutiqueDB: Sendable {
 
   /// High-contention write with `SQLITE_BUSY` retry/backoff.
   ///
-  /// When the engine supports CDC+MVCC on a dedicated handle, uses
-  /// `BEGIN CONCURRENT`. Otherwise (common with CDC enabled) uses busy-retry
-  /// `BEGIN IMMEDIATE` on the primary CDC connection so changes are always
-  /// captured for observation and sync — never silent.
+  /// Without CDC this uses `BEGIN CONCURRENT`. With CDC it uses busy-retry
+  /// `BEGIN IMMEDIATE` on the primary connection so changes are always captured
+  /// for observation and sync, without an unsafe live journal-mode transition.
   @discardableResult
   public func writeConcurrent<T: Sendable>(
     maxAttempts: Int = 8,
     _ body: @Sendable (inout BoutiqueDBConnection) throws -> T
   ) async throws -> T {
-    let actor = try ensureConcurrentActor()
+    let actor = try await ensureConcurrentActor()
     let value: T
-    if concurrentCapturesCDC || !enableCDC {
+    if !enableCDC {
       value = try await actor.writeConcurrent(
         maxAttempts: maxAttempts,
         baseDelayNanoseconds: 1_000_000,
@@ -297,15 +266,14 @@ public final class BoutiqueDB: Sendable {
     return value
   }
 
-  /// Low-level MVCC begin on the concurrent writer connection (BD-005 dual handle).
+  /// Low-level MVCC begin for databases opened with CDC disabled.
   ///
-  /// Requires a real MVCC writer. When CDC forces the primary busy-retry path,
-  /// prefer ``writeConcurrent`` instead.
+  /// With CDC enabled, prefer ``writeConcurrent(maxAttempts:_:)`` instead.
   public func beginConcurrent() async throws {
-    let actor = try ensureConcurrentActor()
-    if enableCDC && !concurrentCapturesCDC {
+    let actor = try await ensureConcurrentActor()
+    if enableCDC {
       throw BoutiqueError.featureUnavailable(
-        "beginConcurrent requires MVCC on the writer; with CDC enabled the engine fell back to busy-retry IMMEDIATE — use writeConcurrent instead"
+        "beginConcurrent requires CDC to be disabled; use writeConcurrent for the CDC-safe busy-retry path"
       )
     }
     try await actor.beginConcurrent()
@@ -313,14 +281,24 @@ public final class BoutiqueDB: Sendable {
 
   /// Low-level MVCC commit on the concurrent writer connection.
   public func commitConcurrent() async throws {
-    let actor = try ensureConcurrentActor()
+    let actor = try await ensureConcurrentActor()
+    guard !enableCDC else {
+      throw BoutiqueError.featureUnavailable(
+        "commitConcurrent requires CDC to be disabled; use writeConcurrent for the CDC-safe path"
+      )
+    }
     try await actor.commitConcurrent()
     notifyLocalCommit()
   }
 
   /// Low-level MVCC rollback on the concurrent writer connection.
   public func rollbackConcurrent() async throws {
-    let actor = try ensureConcurrentActor()
+    let actor = try await ensureConcurrentActor()
+    guard !enableCDC else {
+      throw BoutiqueError.featureUnavailable(
+        "rollbackConcurrent requires CDC to be disabled; use writeConcurrent for the CDC-safe path"
+      )
+    }
     try await actor.rollbackConcurrent()
   }
 

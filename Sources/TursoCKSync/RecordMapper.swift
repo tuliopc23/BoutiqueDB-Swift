@@ -63,7 +63,7 @@ enum RecordMapper {
     }
   }
 
-  static func tursoValue(from ckValue: CKRecordValue?) -> TursoValue {
+  static func tursoValue(from ckValue: CKRecordValue?, field: String) throws -> TursoValue {
     guard let ckValue else { return .null }
     switch ckValue {
     case let number as NSNumber:
@@ -84,24 +84,36 @@ enum RecordMapper {
         )
       )
     case let asset as CKAsset:
-      if let url = asset.fileURL, let data = try? Data(contentsOf: url) {
-        return .blob(data)
+      guard let url = asset.fileURL else {
+        throw TursoCKSyncError.assetReadFailed(field: field, message: "missing file URL")
       }
-      return .null
+      do {
+        return .blob(try Data(contentsOf: url))
+      } catch {
+        throw TursoCKSyncError.assetReadFailed(
+          field: field,
+          message: String(describing: error)
+        )
+      }
     default:
-      return .text(String(describing: ckValue))
+      throw TursoCKSyncError.unsupportedRemoteValue(
+        field: field,
+        type: String(reflecting: type(of: ckValue))
+      )
     }
   }
 
-  static func rowDictionary(from record: CKRecord, table: SyncedTable) -> [String: TursoValue] {
+  static func rowDictionary(from record: CKRecord, table: SyncedTable) throws
+    -> [String: TursoValue]
+  {
     var row: [String: TursoValue] = [:]
     if let pk = RecordIdentity.rowPK(table: table.name, recordName: record.recordID.recordName) {
       row[table.primaryKeyColumn] = .text(pk)
     } else if let pk = record[table.primaryKeyColumn] {
-      row[table.primaryKeyColumn] = tursoValue(from: pk)
+      row[table.primaryKeyColumn] = try tursoValue(from: pk, field: table.primaryKeyColumn)
     }
     for column in table.columns {
-      row[column] = tursoValue(from: record[column])
+      row[column] = try tursoValue(from: record[column], field: column)
     }
     return row
   }

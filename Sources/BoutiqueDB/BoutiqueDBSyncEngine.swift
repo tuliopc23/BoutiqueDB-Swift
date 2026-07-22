@@ -5,16 +5,17 @@ import TursoKit
 
 /// Higher-level CloudKit sync façade paired with ``BoutiqueDB``.
 ///
-/// Wraps ``CloudKitSyncAdapter`` (the default ``SyncAdapter``) so apps can
-/// observe ``SyncStatus`` and drain CDC without talking to CKSyncEngine directly.
+/// Wraps `CloudKitSyncAdapter` (the default `SyncAdapter`) so apps can
+/// observe `SyncStatus` and drain CDC without talking to CKSyncEngine directly.
 ///
-/// Prefer ``attach(to:automaticallyDrain:)`` so local ``BoutiqueDB/write`` commits
-/// auto-drain without the app remembering to call ``drainCDC``.
+/// Prefer ``attach(to:automaticallyDrain:)`` so local ``BoutiqueDB/write(_:)`` commits
+/// auto-drain without the app remembering to call `drainCDC(limit:)`.
 @MainActor
 public final class BoutiqueDBSyncEngine: Sendable {
   public let adapter: CloudKitSyncAdapter
   public var engine: TursoCKSyncEngine { adapter.engine }
   private var commitObserverID: UUID?
+  private weak var attachedDB: BoutiqueDB?
 
   public init(
     connection: TursoConnection,
@@ -63,19 +64,31 @@ public final class BoutiqueDBSyncEngine: Sendable {
 
   /// Registers auto-drain on ``BoutiqueDB/onLocalCommit`` after each successful write.
   public func attach(to db: BoutiqueDB, automaticallyDrain: Bool = true) {
-    if let commitObserverID {
-      db.removePostCommitObserver(commitObserverID)
-      self.commitObserverID = nil
-    }
+    detach()
     guard automaticallyDrain else { return }
+    attachedDB = db
     commitObserverID = db.addPostCommitObserver { [weak self] in
       guard let self else { return }
       _ = try self.engine.drainCDC()
     }
   }
 
-  public func start(automaticallySync: Bool = true) throws {
-    try engine.start(automaticallySync: automaticallySync)
+  /// Removes automatic draining from the previously attached database.
+  public func detach() {
+    if let commitObserverID, let attachedDB {
+      attachedDB.removePostCommitObserver(commitObserverID)
+    }
+    commitObserverID = nil
+    attachedDB = nil
+  }
+
+  public func start(automaticallySync: Bool = true) async throws {
+    try await adapter.start(automaticallySync: automaticallySync)
+  }
+
+  public func stop() async {
+    detach()
+    await adapter.stop()
   }
 
   public func syncStatus() -> AsyncStream<SyncStatus> {
@@ -90,6 +103,18 @@ public final class BoutiqueDBSyncEngine: Sendable {
   @discardableResult
   public func drainLocalChanges() async throws -> Int {
     try await adapter.drainLocalChanges()
+  }
+
+  public func fetchChanges() async throws {
+    try await adapter.fetchChanges()
+  }
+
+  public func sendChanges() async throws {
+    try await adapter.sendChanges()
+  }
+
+  public func syncChanges() async throws {
+    try await adapter.syncChanges()
   }
 
   @discardableResult
