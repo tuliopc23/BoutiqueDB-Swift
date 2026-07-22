@@ -1,0 +1,14 @@
+BoutiqueDB
+Copyright (c) 2024–2026 BoutiqueDB contributors
+
+This product redistributes a prebuilt Turso Database engine library
+(`libturso_sdk_kit` / TursoSDK.xcframework) produced from the Turso /
+BoutiqueDB engine project.
+
+Turso / Limbo engine components are available under the MIT License.
+See https://github.com/tursodatabase/turso (or the engine monorepo LICENSE)
+for the full text and copyright holders of those components.
+
+Additional Swift dependencies (Point-Free StructuredQueries, Dependencies,
+Perception, etc.) are licensed by their respective authors; see Package.resolved
+and each package’s LICENSE.

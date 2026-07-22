@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build xcframework + GitHub Release
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Checkout engine
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/BoutiqueDB
+          path: engine
+        continue-on-error: true
+
+      - name: Build multi-arch TursoSDK (best effort)
+        env:
+          TURSO_SRC: ${{ github.workspace }}/engine
+        run: |
+          chmod +x Scripts/build-turso-sdk-xcframework.sh
+          if [ -d engine/sdk-kit ]; then
+            # Expand SLICES as CI Rust targets become available
+            SLICES=macos-arm64 TURSO_SRC="$TURSO_SRC" ./Scripts/build-turso-sdk-xcframework.sh
+          else
+            echo "Engine checkout missing; skip binary build"
+            exit 1
+          fi
+
+      - name: Checksum
+        id: sum
+        run: |
+          SUM=$(swift package compute-checksum Vendor/TursoSDK.xcframework.zip)
+          echo "checksum=$SUM" >> "$GITHUB_OUTPUT"
+          echo "Checksum: $SUM"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Vendor/TursoSDK.xcframework.zip
+          body: |
+            BoutiqueDB `${{ github.ref_name }}`
+
+            - Attach `TursoSDK.xcframework.zip` for SPM binary consumers.
+            - Checksum: `${{ steps.sum.outputs.checksum }}`
+
+            Install:
+            ```swift
+            .package(url: "https://github.com/${{ github.repository }}.git", from: "${{ github.ref_name }}")
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

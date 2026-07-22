@@ -1,0 +1,78 @@
+name: Swift
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: swift test (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-reg-${{ runner.os }}-${{ hashFiles('Scripts/**') }}
+          restore-keys: cargo-reg-${{ runner.os }}-
+
+      - name: Checkout Turso engine (for sdk-kit build)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/BoutiqueDB
+          path: engine
+          # Fallback: if monorepo not public under that name, set secrets or submodule.
+        continue-on-error: true
+
+      - name: Resolve TURSO_SRC
+        id: eng
+        run: |
+          if [ -d engine/sdk-kit ]; then
+            echo "TURSO_SRC=${{ github.workspace }}/engine" >> "$GITHUB_ENV"
+          elif [ -d "$HOME/Developer/BoutiqueDB/sdk-kit" ]; then
+            echo "TURSO_SRC=$HOME/Developer/BoutiqueDB" >> "$GITHUB_ENV"
+          else
+            echo "No engine tree; expecting prebuilt Vendor/TursoSDK.xcframework in repo or artifact"
+          fi
+
+      - name: Cache engine target
+        if: env.TURSO_SRC != ''
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TURSO_SRC }}/target
+          key: turso-sdk-${{ runner.os }}-${{ hashFiles('Scripts/build-turso-sdk*.sh') }}
+          restore-keys: turso-sdk-${{ runner.os }}-
+
+      - name: Build TursoSDK.xcframework (macos-arm64)
+        if: env.TURSO_SRC != ''
+        run: |
+          chmod +x Scripts/build-turso-sdk-xcframework.sh
+          SLICES=macos-arm64 TURSO_SRC="$TURSO_SRC" ./Scripts/build-turso-sdk-xcframework.sh
+
+      - name: Ensure binary present
+        run: |
+          test -d Vendor/TursoSDK.xcframework || {
+            echo "Missing Vendor/TursoSDK.xcframework — commit path binary for bootstrap or fix engine checkout"
+            exit 1
+          }
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test

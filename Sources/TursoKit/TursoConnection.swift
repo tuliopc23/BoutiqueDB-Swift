@@ -1,4 +1,4 @@
-import CTursoSQLite3
+import CTursoSDK
 import Foundation
 
 public enum CDCCaptureMode: String, Sendable {
@@ -9,22 +9,54 @@ public enum CDCCaptureMode: String, Sendable {
   case full
 }
 
-/// A single connection to a Turso Database file.
+/// A single connection to a Turso Database (sdk-kit C ABI).
 ///
 /// - Important: Do not enable `journal_mode=mvcc` on a connection that also
 ///   enables CDC (`PRAGMA capture_data_changes_conn`). They are mutually exclusive.
 public final class TursoConnection: @unchecked Sendable {
   public private(set) weak var database: TursoDatabase?
   let handle: OpaquePointer
+  private let asyncIO: Bool
   private let lock = NSRecursiveLock()
   private var closed = false
+  private var lastChanges: Int = 0
 
-  /// Set while applying inbound CloudKit changes so CDC→pending can be skipped.
-  public var isSynchronizing: Bool = false
+  private var _isSynchronizing: Bool = false
 
-  init(database: TursoDatabase, handle: OpaquePointer) {
+  public var isApplyingRemoteChanges: Bool {
+    withLockUnchecked { _isSynchronizing }
+  }
+
+  public var isSynchronizing: Bool {
+    get { isApplyingRemoteChanges }
+    set { withLockUnchecked { _isSynchronizing = newValue } }
+  }
+
+  public func withSynchronizingFlag<T>(_ body: () throws -> T) rethrows -> T {
+    lock.lock()
+    _isSynchronizing = true
+    lock.unlock()
+    defer {
+      lock.lock()
+      _isSynchronizing = false
+      lock.unlock()
+    }
+    return try body()
+  }
+
+  /// Whether this connection was opened with sdk-kit `async_io` (cooperative IO).
+  public var usesAsyncIO: Bool { asyncIO }
+
+  init(database: TursoDatabase, handle: OpaquePointer, asyncIO: Bool) {
     self.database = database
     self.handle = handle
+    self.asyncIO = asyncIO
+  }
+
+  private func withLockUnchecked<T>(_ body: () -> T) -> T {
+    lock.lock()
+    defer { lock.unlock() }
+    return body()
   }
 
   deinit {
@@ -37,36 +69,30 @@ public final class TursoConnection: @unchecked Sendable {
     guard !closed else { return }
     closed = true
     database?.unregister(self)
-    _ = sqlite3_close(handle)
+    var err: UnsafePointer<CChar>?
+    _ = turso_connection_close(handle, &err)
+    turso_connection_deinit(handle)
   }
 
   // MARK: - Execute / Query
 
   public func execute(_ sql: String, _ bindings: [TursoValue] = []) throws {
     try withLock {
-      let statement = try TursoStatement(db: handle, sql: sql)
-      defer { statement.finalize() }
-      try statement.bind(bindings)
-      while try statement.step() {}
+      try executeUnlocked(sql, bindings)
     }
   }
 
   @discardableResult
   public func executeUpdate(_ sql: String, _ bindings: [TursoValue] = []) throws -> Int {
-    try execute(sql, bindings)
-    return Int(sqlite3_changes(handle))
+    try withLock {
+      try executeUnlocked(sql, bindings)
+      return lastChanges
+    }
   }
 
   public func query(_ sql: String, _ bindings: [TursoValue] = []) throws -> [[String: TursoValue]] {
     try withLock {
-      let statement = try TursoStatement(db: handle, sql: sql)
-      defer { statement.finalize() }
-      try statement.bind(bindings)
-      var rows: [[String: TursoValue]] = []
-      while try statement.step() {
-        rows.append(statement.namedRow())
-      }
-      return rows
+      try queryUnlocked(sql, bindings)
     }
   }
 
@@ -76,24 +102,23 @@ public final class TursoConnection: @unchecked Sendable {
 
   public func prepare(_ sql: String) throws -> TursoStatement {
     try withLock {
-      try TursoStatement(db: handle, sql: sql)
+      try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
     }
   }
 
-  /// Prepares `sql`, runs `body`, then finalizes the statement.
   public func withPreparedStatement<T>(
     _ sql: String,
     _ body: (TursoStatement) throws -> T
   ) throws -> T {
     try withLock {
-      let statement = try TursoStatement(db: handle, sql: sql)
+      let statement = try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
       defer { statement.finalize() }
       return try body(statement)
     }
   }
 
   public func lastInsertRowID() -> Int64 {
-    sqlite3_last_insert_rowid(handle)
+    turso_connection_last_insert_rowid(handle)
   }
 
   // MARK: - Transactions
@@ -126,6 +151,21 @@ public final class TursoConnection: @unchecked Sendable {
     }
   }
 
+  /// MVCC concurrent transaction (`BEGIN CONCURRENT`).
+  public func writeConcurrent<T>(_ body: () throws -> T) throws -> T {
+    try withLock {
+      try executeUnlocked("BEGIN CONCURRENT")
+      do {
+        let value = try body()
+        try executeUnlocked("COMMIT")
+        return value
+      } catch {
+        try? executeUnlocked("ROLLBACK")
+        throw error
+      }
+    }
+  }
+
   // MARK: - CDC
 
   public func enableCaptureDataChanges(mode: CDCCaptureMode) throws {
@@ -147,7 +187,6 @@ public final class TursoConnection: @unchecked Sendable {
     return rows.compactMap { CDCChange(row: $0) }
   }
 
-  /// Decodes CDC `after`/`before` blobs via Turso SQL helpers.
   public func cdcDecodedJSON(after changeID: Int64, limit: Int = 500) throws -> [[String: TursoValue]] {
     try query(
       """
@@ -179,24 +218,122 @@ public final class TursoConnection: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     guard !closed else {
-      throw TursoError(code: SQLITE_MISUSE, message: "Connection is closed")
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
     }
     return try body()
   }
 
   func executeUnlocked(_ sql: String, _ bindings: [TursoValue] = []) throws {
-    let statement = try TursoStatement(db: handle, sql: sql)
+    let statement = try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
     defer { statement.finalize() }
     try statement.bind(bindings)
     while try statement.step() {}
+    lastChanges = statement.changeCount
   }
 
   func queryUnlocked(_ sql: String, _ bindings: [TursoValue] = []) throws -> [[String: TursoValue]] {
-    let statement = try TursoStatement(db: handle, sql: sql)
+    let statement = try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
     defer { statement.finalize() }
     try statement.bind(bindings)
     var rows: [[String: TursoValue]] = []
     while try statement.step() {
+      rows.append(statement.namedRow())
+    }
+    return rows
+  }
+
+  // MARK: - Cooperative async (official `async_io` + TURSO_IO)
+
+  /// Async execute: drives ``TURSO_IO`` with `await Task.yield()` between IO ticks.
+  public func executeAsync(_ sql: String, _ bindings: [TursoValue] = []) async throws {
+    try await withLockAsync {
+      try await executeUnlockedAsync(sql, bindings)
+    }
+  }
+
+  public func queryAsync(
+    _ sql: String,
+    _ bindings: [TursoValue] = []
+  ) async throws -> [[String: TursoValue]] {
+    try await withLockAsync {
+      try await queryUnlockedAsync(sql, bindings)
+    }
+  }
+
+  public func writeAsync<T: Sendable>(
+    _ body: @Sendable () async throws -> T
+  ) async throws -> T {
+    try await withLockAsync {
+      try await executeUnlockedAsync("BEGIN IMMEDIATE")
+      do {
+        let value = try await body()
+        try await executeUnlockedAsync("COMMIT")
+        return value
+      } catch {
+        try? await executeUnlockedAsync("ROLLBACK")
+        throw error
+      }
+    }
+  }
+
+  public func readAsync<T: Sendable>(
+    _ body: @Sendable () async throws -> T
+  ) async throws -> T {
+    try await withLockAsync {
+      try await executeUnlockedAsync("BEGIN")
+      do {
+        let value = try await body()
+        try await executeUnlockedAsync("COMMIT")
+        return value
+      } catch {
+        try? await executeUnlockedAsync("ROLLBACK")
+        throw error
+      }
+    }
+  }
+
+  public func writeConcurrentAsync<T: Sendable>(
+    _ body: @Sendable () async throws -> T
+  ) async throws -> T {
+    try await withLockAsync {
+      try await executeUnlockedAsync("BEGIN CONCURRENT")
+      do {
+        let value = try await body()
+        try await executeUnlockedAsync("COMMIT")
+        return value
+      } catch {
+        try? await executeUnlockedAsync("ROLLBACK")
+        throw error
+      }
+    }
+  }
+
+  private func withLockAsync<T>(_ body: () async throws -> T) async throws -> T {
+    // NSLock is not async-safe; callers (DatabaseActor) provide exclusivity.
+    // Use a nonisolated snapshot of `closed` without lock (actor serializes BoutiqueDB path).
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
+    }
+    return try await body()
+  }
+
+  func executeUnlockedAsync(_ sql: String, _ bindings: [TursoValue] = []) async throws {
+    let statement = try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
+    defer { statement.finalize() }
+    try statement.bind(bindings)
+    while try await statement.stepAsync() {}
+    lastChanges = statement.changeCount
+  }
+
+  func queryUnlockedAsync(
+    _ sql: String,
+    _ bindings: [TursoValue] = []
+  ) async throws -> [[String: TursoValue]] {
+    let statement = try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
+    defer { statement.finalize() }
+    try statement.bind(bindings)
+    var rows: [[String: TursoValue]] = []
+    while try await statement.stepAsync() {
       rows.append(statement.namedRow())
     }
     return rows
@@ -208,7 +345,6 @@ public final class TursoConnection: @unchecked Sendable {
 public struct CDCChange: Sendable, Equatable {
   public var changeID: Int64
   public var changeTime: Int64
-  /// `1` = INSERT, `0` = UPDATE, `-1` = DELETE, `2` = COMMIT (filtered out).
   public var changeType: Int64
   public var tableName: String
   public var rowID: TursoValue

@@ -1,4 +1,4 @@
-import CTursoSQLite3
+import CTursoSDK
 import Foundation
 
 /// A value that can be bound to or read from a Turso statement.
@@ -53,23 +53,28 @@ public enum TursoValue: Sendable, Equatable {
 }
 
 extension TursoValue {
-  static func column(at index: Int32, statement: OpaquePointer) -> TursoValue {
-    switch sqlite3_column_type(statement, index) {
-    case SQLITE_NULL:
+  static func column(at index: Int, statement: OpaquePointer) -> TursoValue {
+    let kind = turso_statement_row_value_kind(statement, index)
+    switch kind {
+    case TURSO_TYPE_NULL:
       return .null
-    case SQLITE_INTEGER:
-      return .integer(sqlite3_column_int64(statement, index))
-    case SQLITE_FLOAT:
-      return .double(sqlite3_column_double(statement, index))
-    case SQLITE_TEXT:
-      guard let cString = sqlite3_column_text(statement, index) else { return .null }
-      return .text(String(cString: cString))
-    case SQLITE_BLOB:
-      let bytes = sqlite3_column_bytes(statement, index)
-      guard bytes > 0, let ptr = sqlite3_column_blob(statement, index) else {
+    case TURSO_TYPE_INTEGER:
+      return .integer(turso_statement_row_value_int(statement, index))
+    case TURSO_TYPE_REAL:
+      return .double(turso_statement_row_value_double(statement, index))
+    case TURSO_TYPE_TEXT:
+      guard let ptr = turso_statement_row_value_bytes_ptr(statement, index) else { return .null }
+      let count = Int(turso_statement_row_value_bytes_count(statement, index))
+      guard count > 0 else { return .text("") }
+      let data = Data(bytes: ptr, count: count)
+      return .text(String(data: data, encoding: .utf8) ?? "")
+    case TURSO_TYPE_BLOB:
+      guard let ptr = turso_statement_row_value_bytes_ptr(statement, index) else {
         return .blob(Data())
       }
-      return .blob(Data(bytes: ptr, count: Int(bytes)))
+      let count = Int(turso_statement_row_value_bytes_count(statement, index))
+      guard count > 0 else { return .blob(Data()) }
+      return .blob(Data(bytes: ptr, count: count))
     default:
       return .null
     }

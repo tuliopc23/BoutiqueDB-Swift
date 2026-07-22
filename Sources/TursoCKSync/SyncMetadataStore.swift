@@ -32,6 +32,24 @@ public struct SyncMetadataStore: Sendable {
 
     INSERT OR IGNORE INTO ck_cdc_cursor (id, last_change_id, updated_at)
     VALUES (1, 0, 0);
+
+    CREATE TABLE IF NOT EXISTS ck_account (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      account_hash TEXT,
+      updated_at REAL NOT NULL
+    );
+
+    INSERT OR IGNORE INTO ck_account (id, account_hash, updated_at)
+    VALUES (1, NULL, 0);
+
+    CREATE TABLE IF NOT EXISTS ck_meta_version (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      format_version INTEGER NOT NULL DEFAULT 1,
+      updated_at REAL NOT NULL
+    );
+
+    INSERT OR IGNORE INTO ck_meta_version (id, format_version, updated_at)
+    VALUES (1, 1, 0);
     """
 
   private let connection: TursoConnection
@@ -46,6 +64,7 @@ public struct SyncMetadataStore: Sendable {
       guard !sql.isEmpty else { continue }
       try connection.execute(sql)
     }
+    try saveFormatVersion(Self.currentFormatVersion)
   }
 
   // MARK: - Engine state
@@ -186,6 +205,60 @@ public struct SyncMetadataStore: Sendable {
       WHERE id = 1
       """,
       [.double(Date().timeIntervalSince1970)]
+    )
+    try connection.execute(
+      """
+      UPDATE ck_account
+      SET account_hash = NULL, updated_at = ?
+      WHERE id = 1
+      """,
+      [.double(Date().timeIntervalSince1970)]
+    )
+  }
+
+  // MARK: - Account identity (BD-007)
+
+  public func loadAccountHash() throws -> String? {
+    try connection.queryOne("SELECT account_hash FROM ck_account WHERE id = 1")?[
+      "account_hash"
+    ]?.stringValue
+  }
+
+  public func saveAccountHash(_ hash: String?) throws {
+    try connection.execute(
+      """
+      INSERT INTO ck_account (id, account_hash, updated_at)
+      VALUES (1, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        account_hash = excluded.account_hash,
+        updated_at = excluded.updated_at
+      """,
+      [
+        hash.map { .text($0) } ?? .null,
+        .double(Date().timeIntervalSince1970),
+      ]
+    )
+  }
+
+  /// Sync metadata format version (bump when on-disk layout changes incompatibly).
+  public static let currentFormatVersion: Int64 = 1
+
+  public func loadFormatVersion() throws -> Int64 {
+    try connection.queryOne("SELECT format_version FROM ck_meta_version WHERE id = 1")?[
+      "format_version"
+    ]?.int64Value ?? 1
+  }
+
+  public func saveFormatVersion(_ version: Int64 = SyncMetadataStore.currentFormatVersion) throws {
+    try connection.execute(
+      """
+      INSERT INTO ck_meta_version (id, format_version, updated_at)
+      VALUES (1, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        format_version = excluded.format_version,
+        updated_at = excluded.updated_at
+      """,
+      [.integer(version), .double(Date().timeIntervalSince1970)]
     )
   }
 }

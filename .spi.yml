@@ -1,0 +1,10 @@
+# Swift Package Index — https://github.com/SwiftPackageIndex/SPIManifest
+# iOS SPI builds deferred until TursoSDK.xcframework includes ios-arm64 (+ sim).
+version: 1
+builder:
+  configs:
+    - platform: macos-xcodebuild
+      scheme: BoutiqueDB-Package
+      documentation_targets:
+        - BoutiqueDB
+        - TursoKit

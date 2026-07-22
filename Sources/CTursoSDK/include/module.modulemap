@@ -1,0 +1,4 @@
+module CTursoSDK {
+  header "turso.h"
+  export *
+}

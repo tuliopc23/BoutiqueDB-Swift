@@ -225,7 +225,7 @@ struct TursoCKSyncTests {
       "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
       [.text("obs"), .text("t"), .text("b"), .text("2026-01-01T00:00:00Z")]
     )
-    store.poll()
+    store.advanceFromCDC()
     #expect(store.generation == before + 1)
   }
 
@@ -273,4 +273,230 @@ struct TursoCKSyncTests {
     try b.applyRemoteDeletion(recordID: CKRecord.ID(recordName: "notes:\(id)", zoneID: b.zoneID))
     #expect(try connB.query("SELECT * FROM notes WHERE id = ?", [.text(id)]).isEmpty)
   }
+
+  @Test func multiTableSyncRoundTrip() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("turso-ck-multi-\(UUID().uuidString).db")
+    let conn = try TursoDatabase(url: url).connect(enableCDC: true)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    try conn.execute(
+      """
+      CREATE TABLE notes (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+      """
+    )
+    try conn.execute(
+      """
+      CREATE TABLE tags (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+      """
+    )
+
+    let config = TursoCKSyncConfiguration(
+      containerIdentifier: "iCloud.com.turso.cloudkit.tests",
+      syncedTables: [
+        notesTable,
+        SyncedTable(name: "tags", columns: ["name", "updatedAt"]),
+      ],
+      enablesCloudKit: false
+    )
+    let engine = try TursoCKSyncEngine(connection: conn, configuration: config)
+    try engine.start(automaticallySync: false)
+
+    try engine.performLocalWrite {
+      try conn.execute(
+        "INSERT INTO notes (id, title, body, updatedAt) VALUES ('n1','t','b','2026-01-01T00:00:00Z')"
+      )
+      try conn.execute(
+        "INSERT INTO tags (id, name, updatedAt) VALUES ('t1','swift','2026-01-01T00:00:00Z')"
+      )
+    }
+
+    let pendingNames = engine.pendingRecordZoneChanges.compactMap { change -> String? in
+      if case .saveRecord(let id) = change { return id.recordName }
+      return nil
+    }
+    #expect(pendingNames.contains("notes:n1"))
+    #expect(pendingNames.contains("tags:t1"))
+  }
+
+  @Test func pendingBatchesRespectMaxBatchSize() throws {
+    let (url, conn) = try makeConnection()
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let config = TursoCKSyncConfiguration(
+      containerIdentifier: "iCloud.com.turso.cloudkit.tests",
+      syncedTables: [notesTable],
+      maxBatchSize: 250,
+      drainCDCLimit: 500,
+      enablesCloudKit: false
+    )
+    let engine = try TursoCKSyncEngine(connection: conn, configuration: config)
+    try engine.start(automaticallySync: false)
+
+    try engine.performLocalWrite {
+      for i in 0..<600 {
+        try conn.execute(
+          "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
+          [
+            .text("id-\(i)"),
+            .text("t"),
+            .text("b"),
+            .text("2026-01-01T00:00:00Z"),
+          ]
+        )
+      }
+    }
+
+    let batches = engine.pendingBatches()
+    #expect(!batches.isEmpty)
+    #expect(batches.allSatisfy { $0.count <= 250 })
+    let total = batches.reduce(0) { $0 + $1.count }
+    // drainCDCLimit 500 — some CDC rows may be commit markers filtered out.
+    #expect(total >= 400)
+    #expect(total <= 600)
+    #expect(batches.count >= 2)  // 400+ pending at size 250 ⇒ multiple batches
+  }
+
+  @Test func lastWriterWinsConflict() throws {
+    let (url, conn) = try makeConnection()
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let config = TursoCKSyncConfiguration(
+      containerIdentifier: "iCloud.com.turso.cloudkit.tests",
+      syncedTables: [notesTable],
+      conflictPolicy: .lastWriterWins(field: "updatedAt"),
+      enablesCloudKit: false
+    )
+    let engine = try TursoCKSyncEngine(connection: conn, configuration: config)
+    try engine.start(automaticallySync: false)
+
+    let id = "lw1"
+    try engine.performLocalWrite {
+      try conn.execute(
+        "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
+        [.text(id), .text("local"), .text("b"), .text("2026-07-22T10:05:00Z")]
+      )
+    }
+
+    let recordID = CKRecord.ID(recordName: "notes:\(id)", zoneID: engine.zoneID)
+    let server = CKRecord(recordType: "notes", recordID: recordID)
+    server["id"] = id
+    server["title"] = "server"
+    server["body"] = "b"
+    server["updatedAt"] = "2026-07-22T10:00:00Z"
+
+    let failed = try #require(try engine.makeRecord(for: recordID))
+    try engine.resolveConflictForTesting(failedRecord: failed, serverRecord: server)
+
+    // Local is newer → keep local title, re-pend save.
+    let title = try conn.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])?[
+      "title"
+    ]?.stringValue
+    #expect(title == "local")
+    let pending = engine.pendingRecordZoneChanges.contains {
+      if case .saveRecord(let rid) = $0 { return rid.recordName == "notes:\(id)" }
+      return false
+    }
+    #expect(pending)
+  }
+
+  @Test func serverWinsConflict() throws {
+    let (url, conn) = try makeConnection()
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let config = TursoCKSyncConfiguration(
+      containerIdentifier: "iCloud.com.turso.cloudkit.tests",
+      syncedTables: [notesTable],
+      conflictPolicy: .serverWins,
+      enablesCloudKit: false
+    )
+    let engine = try TursoCKSyncEngine(connection: conn, configuration: config)
+    try engine.start(automaticallySync: false)
+
+    let id = "sw1"
+    try engine.performLocalWrite {
+      try conn.execute(
+        "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
+        [.text(id), .text("local"), .text("b"), .text("2026-07-22T10:05:00Z")]
+      )
+    }
+
+    let recordID = CKRecord.ID(recordName: "notes:\(id)", zoneID: engine.zoneID)
+    let server = CKRecord(recordType: "notes", recordID: recordID)
+    server["id"] = id
+    server["title"] = "server"
+    server["body"] = "b"
+    server["updatedAt"] = "2026-07-22T10:00:00Z"
+
+    let failed = try #require(try engine.makeRecord(for: recordID))
+    try engine.resolveConflictForTesting(failedRecord: failed, serverRecord: server)
+
+    let title = try conn.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])?[
+      "title"
+    ]?.stringValue
+    #expect(title == "server")
+  }
+
+  @Test func accountHashChangePreservesLocalData() throws {
+    let (url, conn) = try makeConnection()
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try engine.start(automaticallySync: false)
+    try engine.noteAccountIdentity("account-a")
+
+    try engine.performLocalWrite {
+      try conn.execute(
+        "INSERT INTO notes (id, title, body, updatedAt) VALUES ('1','t','b','2026-01-01T00:00:00Z')"
+      )
+    }
+    #expect(try conn.query("SELECT * FROM notes").count == 1)
+
+    try engine.noteAccountIdentity("account-b")
+    // Local user data preserved; metadata wiped and rows re-enqueued.
+    #expect(try conn.query("SELECT * FROM notes").count == 1)
+    #expect(try engine.metadata.loadAccountHash() == "account-b")
+  }
+
+  @Test func cloudKitSyncAdapterStatusStream() async throws {
+    let (url, conn) = try makeConnection()
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let adapter = try CloudKitSyncAdapter(
+      connection: conn,
+      configuration: syncConfiguration
+    )
+    var iterator = adapter.syncStatus().makeAsyncIterator()
+    let first = await iterator.next()
+    #expect(first == .idle)
+
+    try await adapter.start()
+    _ = try await adapter.drainLocalChanges()
+  }
+
+  @Test func wipePreservingDataReenqueues() throws {
+    let (url, conn) = try makeConnection()
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try engine.start(automaticallySync: false)
+    try engine.performLocalWrite {
+      try conn.execute(
+        "INSERT INTO notes (id, title, body, updatedAt) VALUES ('1','t','b','2026-01-01T00:00:00Z')"
+      )
+    }
+    try engine.wipeAndRebootstrap(preserveLocalUserData: true)
+    #expect(try conn.query("SELECT * FROM notes").count == 1)
+    #expect(!engine.pendingRecordZoneChanges.isEmpty)
+  }
 }
+

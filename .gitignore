@@ -6,7 +6,15 @@ xcuserdata/
 *.db
 *.db-*
 /tmp/
+DerivedData/
 
-# Built Turso binaries (regenerate with ./Scripts/build-turso.sh)
+# Large engine artifacts — regenerate with Scripts/ (do not commit multi-hundred-MB libs)
 Vendor/turso/lib/
+Vendor/turso-sdk/lib/
 Vendor/TursoSQLite3.xcframework/
+Vendor/TursoSDK.xcframework/
+Vendor/*.xcframework.zip
+Release/
+
+# Local checksum scratch
+*.checksum

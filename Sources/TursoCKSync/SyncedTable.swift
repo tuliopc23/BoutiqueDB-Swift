@@ -72,6 +72,8 @@ public struct TursoCKSyncConfiguration: Sendable {
   public var conflictPolicy: ConflictPolicy
   /// Soft cap for records per `RecordZoneChangeBatch` (CloudKit max 250).
   public var maxBatchSize: Int
+  /// Max CDC rows read per ``TursoCKSyncEngine/drainCDC(limit:)`` call (default 500).
+  public var drainCDCLimit: Int
   /// When `false`, CDC drain keeps pending changes in-process (for unit tests /
   /// hosts without CloudKit entitlements). Set `true` in production apps.
   public var enablesCloudKit: Bool
@@ -81,7 +83,8 @@ public struct TursoCKSyncConfiguration: Sendable {
     zoneName: String = "app.default",
     syncedTables: [SyncedTable],
     conflictPolicy: ConflictPolicy = .serverWins,
-    maxBatchSize: Int = 200,
+    maxBatchSize: Int = 250,
+    drainCDCLimit: Int = 500,
     enablesCloudKit: Bool = true
   ) {
     self.containerIdentifier = containerIdentifier
@@ -89,6 +92,7 @@ public struct TursoCKSyncConfiguration: Sendable {
     self.syncedTables = syncedTables
     self.conflictPolicy = conflictPolicy
     self.maxBatchSize = min(max(1, maxBatchSize), 250)
+    self.drainCDCLimit = max(1, drainCDCLimit)
     self.enablesCloudKit = enablesCloudKit
   }
 
