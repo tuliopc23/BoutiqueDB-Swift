@@ -1,6 +1,6 @@
 # Testing
 
-BoutiqueDB can be tested with the Swift Testing framework or XCTest. The key is to use isolated, in-memory or temporary-file databases per test.
+BoutiqueDB can be tested with the Swift Testing framework or XCTest. The key is to use isolated, temporary-file databases per test.
 
 ## Unit tests with `BoutiqueDB`
 
@@ -12,6 +12,10 @@ import Testing
 func insertsAndQueriesNotes() async throws {
   let url = URL(fileURLWithPath: "/tmp/boutiquedb-test-\(UUID().uuidString).db")
   let db = try await BoutiqueDB.open(url: url, migrations: AppMigrations.plan)
+  defer {
+    db.close()
+    try? FileManager.default.removeItem(at: url)
+  }
 
   try await db.write { conn in
     try conn.execute(
@@ -21,10 +25,30 @@ func insertsAndQueriesNotes() async throws {
   }
 
   let count = try await db.read { conn in
-    try Note.all.fetchCount(conn)
+    try Note.all.fetchCount(conn.connection)
   }
 
   #expect(count == 1)
+}
+```
+
+## Test helpers
+
+Create a helper that every test calls:
+
+```swift
+func openTestDB(
+  migrations: BoutiqueMigrationPlan = AppMigrations.plan,
+  startListening: Bool = false
+) throws -> BoutiqueDB {
+  let url = FileManager.default.temporaryDirectory
+    .appendingPathComponent("bd-test-\(UUID().uuidString).db")
+  return try BoutiqueDB(
+    url: url,
+    startListening: startListening,
+    openOptions: .tursoEnhanced,
+    migrations: migrations
+  )
 }
 ```
 
@@ -38,18 +62,42 @@ If you are iterating on the engine itself, point the package at a local `Vendor/
 BOUTIQUE_LOCAL_TURSO_SDK=1 swift test
 ```
 
+For a single debug slice:
+
+```bash
+SLICES=macos-arm64 ./Scripts/build-turso-sdk-xcframework.sh
+BOUTIQUE_LOCAL_TURSO_SDK=1 swift test
+```
+
+Never ship single-slice binaries.
+
 ## Testing CloudKit sync
 
 - Use the CloudKit development environment.
 - Test on a physical device with a signed-in iCloud account before shipping.
 - The simulator is useful for unit tests but does not validate push-driven sync.
+- Use `enablesCloudKit: false` in unit tests to avoid entitlements.
 
-## Snapshot testing
+## LiveQuery tests
 
-`BoutiqueDBTests` uses `swift-snapshot-testing` for macro output and query generation snapshots. Run them with `swift test`.
+Use `store.advanceFromCDC()` to trigger a refresh synchronously:
+
+```swift
+let query = LiveQuery(db) { Note.all.asSelect() }
+_ = await waitFor { !query.isLoading }
+
+try await db.write { conn in
+  try Note.insert { Note(id: UUID(), title: "T", body: "") }
+    .execute(conn.connection)
+}
+
+query.forceRefresh()
+_ = await waitFor { query.wrappedValue.count == 1 }
+```
 
 ## Test isolation
 
 - Create a unique database file per test.
-- Clean up files in `tearDown` or use a temporary directory.
+- Call `db.close()` and delete files in `defer`.
 - Do not share a `BoutiqueDB` instance across tests that write data.
+- Use `startListening: false` unless you are testing observation.

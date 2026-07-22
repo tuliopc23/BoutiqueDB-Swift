@@ -1,4 +1,4 @@
-# Migrations (BoutiqueDB)
+# Migrations
 
 BoutiqueDB follows the same production rules as **SQLiteData / GRDB**:
 
@@ -29,7 +29,7 @@ enum AppMigrations {
     eraseDatabaseOnSchemaChange: false  // true only in DEBUG if you want GRDB-style erase
   ) {
     BoutiqueMigration("v1_create_notes") { connection in
-      for statement in NoteSchema.boutiqueCreateStatements {
+      for statement in Note.boutiqueCreateStatements {
         try connection.execute(statement)
       }
     }
@@ -38,19 +38,51 @@ enum AppMigrations {
         "ALTER TABLE notes ADD COLUMN updatedAt TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'"
       )
     }
+    BoutiqueMigration("v3_seed_defaults") { connection in
+      try connection.execute(
+        "INSERT OR IGNORE INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
+        [.text("default"), .text("Welcome"), .text("Getting started"), .text(TursoDateFormatting.string(from: Date()))]
+      )
+    }
   }
 }
 ```
+
+## Additive columns
+
+```swift
+try await db.ensureColumn(
+  table: "notes",
+  name: "tag",
+  sqlType: "TEXT",
+  default: "''"
+)
+```
+
+`ensureColumn` runs `ALTER TABLE ADD COLUMN IF NOT EXISTS`. It is idempotent and safe in migrations.
+
+## Asynchronous migrations
+
+Use only when you must `await` something (network, CloudKit, user consent):
+
+```swift
+BoutiqueMigration("v4_backfill_from_cloud") { db in
+  try await BackfillService.shared.fillNotes(into: db)
+}
+```
+
+Asynchronous migrations commit the tracking record separately, so the body must be idempotent.
 
 ## Helpers
 
 | API | Use |
 |---|---|
 | `db.create(Schema.self)` | Run macro/schema DDL (tables, FTS, vector, MV) |
-| `db.ensureColumn(...)` | Safe additive column (idempotent) |
-| `db.tableExists` / `columnExists` | Introspection |
-| `db.dropTableIfExists` | Explicit only — never auto |
-| `db.syncSchema(models, policy: .additiveOnly)` | Create missing IF NOT EXISTS tables/indexes; also `ensureColumn` for `BoutiqueSchemaColumns` |
+| `db.createFTSIndex(_:)` | Create a Turso Tantivy index |
+| `db.createVectorIndex(_:)` | Create a Turso vector index |
+| `db.createMaterializedView(_:)` | Create an incremental materialized view |
+| `db.ensureColumn(...)` | Safe additive column |
+| `db.syncSchema(models, policy: .additiveOnly)` | Create missing IF NOT EXISTS tables/indexes; also `ensureColumn` |
 
 ## What “auto” means here
 
@@ -58,21 +90,12 @@ enum AppMigrations {
 |---|---|
 | `CREATE TABLE/INDEX IF NOT EXISTS` via schema sync | DROP COLUMN / DROP TABLE |
 | `ensureColumn` when you call it in a migration | Silent rename |
-| | Type changes |
+|  | Type changes |
 
-Full model-diff auto-migration (Room-style complex AutoMigration / Prisma generate) is **not** the default — it is how production data gets corrupted. Use explicit migrations for renames and data backfills.
-
-## Dependencies
-
-```swift
-prepareDependencies {
-  $0.boutiqueDB = try await BoutiqueDB.open(url: url, migrations: AppMigrations.plan)
-}
-
-// later
-@Dependency(\.boutiqueDB) var db
-```
+Full model-diff auto-migration is **not** the default — it is how production data gets corrupted. Use explicit migrations for renames and data backfills.
 
 ## Turso features in migrations
 
 Put FTS / vector / materialized view DDL in a migration (via `create` / `createFTSIndex` / macros). Gate on `db.capabilities` if the vendored lib may lack experimental flags.
+
+See [Best practices](../best-practices) and [Turso features in Apple apps](../turso-features-in-apple-apps) for more.

@@ -1,6 +1,6 @@
 # BoutiqueDB
 
-BoutiqueDB is a local-first Swift persistence layer built on the [Turso](https://github.com/tursodatabase/turso) database engine. It combines SQLiteData-style ergonomics with a modern Swift concurrency model, change-data-capture (CDC) live queries, CloudKit synchronization, and opt-in access to Turso-only features such as full-text search, vector search, materialized views, and concurrent writes.
+BoutiqueDB is a local-first Swift persistence framework built on the [Turso](https://github.com/tursodatabase/turso) database engine. It gives you SQLiteData-style ergonomics, CDC-backed live queries, CloudKit synchronization, and opt-in access to Turso-only features such as full-text search, vector search, materialized views, and concurrent writes.
 
 ```swift
 import BoutiqueDB
@@ -12,10 +12,8 @@ let db = try await BoutiqueDB.open(
 )
 
 try await db.write { conn in
-  try conn.execute(
-    "INSERT INTO notes (id, title, body) VALUES (?, ?, ?)",
-    [.text("1"), .text("Hello"), .text("")]
-  )
+  try Note.insert { Note(id: UUID(), title: "Hello", body: "") }
+    .execute(conn.connection)
 }
 
 let rows = try await db.fetchAll(Note.self)
@@ -28,25 +26,39 @@ BoutiqueDB is designed for Apple apps that need:
 - **Reliable local persistence** with a SQLite-compatible file format.
 - **Modern Swift concurrency** (`async`/`await`, `Actor`, `Sendable`).
 - **Reactive UI updates** through `LiveQuery` and `LiveQueryOne`.
-- **CloudKit sync** via `CKSyncEngine` without maintaining a separate sync backend.
+- **CloudKit sync** via `CKSyncEngine` without maintaining a separate backend.
 - **Optional Turso engine features** such as FTS, vector indexes, materialized views, and `BEGIN CONCURRENT`.
 
-It is not a hosted database service. Your data lives in the app’s sandbox and can sync through CloudKit or a future adapter.
+It is not a hosted database service. Your data lives in the app sandbox and can sync through CloudKit or a future adapter.
 
-## Why Turso
+## Core principles
 
-BoutiqueDB uses a vendored, multi-arch `TursoSDK.xcframework` built from the official `sdk-kit` C ABI (`turso.h`). This gives the framework:
+1. **Local-first.** The database file is authoritative. Sync is asynchronous and opportunistic.
+2. **Swift-native.** Use `async`/`await`, `@Observable`, `@Table`, and property wrappers.
+3. **Explicit is better than implicit.** Migrations are append-only and named. Schema sync is additive-only and opt-in.
+4. **Turso features are opt-in.** Experimental engine flags are enabled through `TursoOpenOptions`, not forced on every open.
+5. **Concurrency safety.** `BoutiqueDB` is `@MainActor`; all engine I/O runs on a `DatabaseActor`.
 
-- A SQLite-compatible file format and dialect.
-- A cooperatively async I/O core exposed through `DatabaseActor`.
-- Official experimental feature flags (`views`, `index_method`, `generated_columns`, `encryption`, `multiprocess_wal`, and others).
-- A path toward incremental view maintenance, vector search, and multi-process WAL sharing.
+## Capability matrix
 
-> **Note:** The engine is a Turso fork (`BoutiqueDB`) maintained for the Swift package. It is not a general-purpose Turso build; multi-language bindings and non-Apple packaging are out of scope.
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Local CRUD with `@Table` / `StructuredQueries` | **Ready** | Type-safe model layer |
+| `LiveQuery` / `LiveQueryOne` CDC observation | **Ready** | Cooperative polling, < 250 ms refresh |
+| Concurrent writes | **Ready** | CDC-safe busy-retry or MVCC when CDC is off |
+| CloudKit private-database sync | **Beta** | Test on physical device before shipping |
+| Migrations | **Ready** | Append-only, transactional or asynchronous |
+| Full-text search (Tantivy) | **Opt-in** | Requires `index_method` token |
+| Vector search | **Opt-in** | Dense and sparse vectors, index method optional |
+| Materialized views (IVM) | **Opt-in** | Requires `views` token |
+| Generated columns, `STRICT`, `WITHOUT ROWID` | **Opt-in** | Via `@BoutiqueTable` |
+| At-rest encryption | **Opt-in** | `aegis256` or `aes256gcm`, Keychain key |
+| Multi-process WAL | **Opt-in** | App Group / extension sharing |
 
 ## Where to start
 
+- [Core concepts](core-concepts)
 - [Installation](getting-started/installation)
 - [Quick start](getting-started/quick-start)
-- [How the stack fits together](stack)
-- [Why BoutiqueDB instead of SQLite directly](why-boutiquedb)
+- [SwiftUI integration](swiftui-integration)
+- [Turso features in Apple apps](turso-features-in-apple-apps)

@@ -1,6 +1,6 @@
 # Experimental features
 
-The Turso engine exposes several opt-in features. BoutiqueDB surfaces them through `TursoOpenOptions.experimentalFeatures`.
+The Turso engine exposes several opt-in features. BoutiqueDB surfaces them through `TursoOpenOptions` and probes them through `db.capabilities`.
 
 ## Official feature tokens
 
@@ -31,11 +31,17 @@ let db = try BoutiqueDB(
 
 ## Capability probes
 
-Not every engine build includes every feature. `TursoCapabilities.probe` checks support at runtime:
+Not every engine build includes every feature. `db.capabilities` checks support at runtime:
 
 ```swift
-if TursoCapabilities.probe(.fts, on: db) {
+if db.capabilities.ftsIndex {
   // safe to create FTS indexes
+}
+if db.capabilities.vectorIndex {
+  // safe to create vector indexes
+}
+if db.capabilities.materializedViews {
+  // safe to create materialized views
 }
 ```
 
@@ -53,3 +59,5 @@ These features are experimental in the upstream engine:
 ## Default preset
 
 `TursoOpenOptions.tursoEnhanced` enables `views`, `index_method`, `generated_columns`, `vacuum`, and `without_rowid`. This is the recommended starting point for product apps.
+
+For usage examples, see [Turso features in Apple apps](../turso-features-in-apple-apps).

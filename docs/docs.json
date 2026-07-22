@@ -19,6 +19,7 @@
         "icon": "book-open",
         "pages": [
           "index",
+          "core-concepts",
           "stack",
           "why-boutiquedb",
           "sqlite-comparison",
@@ -44,6 +45,10 @@
           "guides/app-template",
           "guides/cloudkit-sync",
           "guides/fts-and-vector",
+          "turso-features-in-apple-apps",
+          "swiftui-integration",
+          "best-practices",
+          "performance-tuning",
           "guides/concurrency",
           "guides/testing"
         ]
@@ -73,9 +78,10 @@
         ]
       },
       {
-        "group": "Agent Skills",
+        "group": "Agent & Human Cookbook",
         "icon": "robot",
         "pages": [
+          "agent-cookbook",
           "skills"
         ]
       }

@@ -1,6 +1,6 @@
 # Models and tables
 
-BoutiqueDB models are Swift structs annotated with `swift-structured-queries` macros and a BoutiqueDB-specific macro layer.
+BoutiqueDB models are Swift structs annotated with `StructuredQueries` macros and a BoutiqueDB-specific macro layer.
 
 ## Define a table
 
@@ -19,11 +19,12 @@ struct Note: Identifiable, Sendable {
 
 `@Table` generates:
 
-- A table descriptor.
-- `Codable` conformance helpers.
-- Query DSL entry points: `Note.all`, `Note.filter`, `Note.insert`, etc.
+- A `Table` protocol conformance.
+- A `PrimaryKeyedTable` conformance when a `@Column(primaryKey:)` exists.
+- Query DSL entry points: `Note.all`, `Note.where { ... }`, `Note.insert`, `Note.update`.
+- `Codable`-driven decoding from the database row.
 
-Models must be `Sendable` because they cross actor boundaries.
+Models must be `Sendable` because they cross `DatabaseActor` and `MainActor` boundaries.
 
 ## Column types
 
@@ -38,29 +39,56 @@ BoutiqueDB maps Swift types to SQLite storage classes:
 | `Date` | `TEXT` (ISO 8601) |
 | `UUID` | `TEXT` |
 | `Bool` | `INTEGER` (0/1) |
-| `Vector32` | custom vector type |
+| `Vector32` | `TEXT` (JSON-like vector literal) |
 
 `Optional` values are stored as `NULL`.
 
-## Create a table at migration time
+## Insert, update, delete
 
 ```swift
-try await db.create(Note.self)
+try await db.write { conn in
+  try Note.insert { Note(id: uuid, title: "Hello", body: "") }
+    .execute(conn.connection)
+
+  try Note.where { $0.id.eq(uuid) }
+    .update { $0.title = "Updated" }
+    .execute(conn.connection)
+
+  try Note.where { $0.id.eq(uuid) }
+    .delete()
+    .execute(conn.connection)
+}
 ```
 
-This emits `CREATE TABLE IF NOT EXISTS` using the `@Table` descriptor.
+## Query a table
+
+```swift
+let recent = try await db.read { conn in
+  try Note.where { $0.title.contains("swift") }
+    .order { $0.updatedAt.desc() }
+    .limit(50)
+    .fetchAll(conn.connection)
+}
+```
+
+## Project columns
+
+```swift
+let titles = try await db.read { conn in
+  try Note.select { ($0.title, $0.updatedAt) }
+    .fetchAll(conn.connection)
+}
+```
 
 ## Raw SQL escape hatch
 
-Use `#sql` from `swift-structured-queries` for fragments that the DSL cannot express:
+Use `#sql` from `StructuredQueries` for fragments the DSL cannot express:
 
 ```swift
-import StructuredQueries
-
 let rows = try await db.read { conn in
   try Note
     .where(#sql("lower(title) LIKE ?", [.text("%swift%")]))
-    .fetchAll(conn)
+    .fetchAll(conn.connection)
 }
 ```
 
@@ -73,4 +101,16 @@ The `BoutiqueDBMacros` module adds peer macros for Turso-specific features:
 - `@VectorIndex` declares a vector index with a distance metric.
 - `@MaterializedView` defines an incremental view.
 
-See [FTS and vector search](fts-and-vector) for examples.
+```swift
+@BoutiqueTable(strict: true)
+@FTSIndex("title", "body")
+@VectorIndex("embedding", metric: .cosine)
+struct Article: Sendable {
+  @Column(primaryKey: true) let id: UUID
+  var title: String
+  var body: String
+  var embedding: Vector32
+}
+```
+
+See [FTS and vector search](fts-and-vector) and [Turso features in Apple apps](../turso-features-in-apple-apps) for examples.

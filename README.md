@@ -128,12 +128,19 @@ The `docs/` directory is the source for both Mintlify and GitBook.
 
 | Doc | Topic |
 |-----|--------|
-| [Introduction](docs/index.md) | What BoutiqueDB is |
+| [Introduction](docs/index.md) | What BoutiqueDB is, feature matrix |
+| [Core concepts](docs/core-concepts.md) | Models, migrations, reads/writes, sync, features |
 | [Stack](docs/stack.md) | Layers & modules |
 | [Quick start](docs/getting-started/quick-start.md) | Install, model, migrate, write, observe |
 | [Open options](docs/getting-started/open-options.md) | Official feature flags + asyncIO |
+| [SwiftUI integration](docs/swiftui-integration.md) | `@Observable`, `@LiveQuery`, previews, patterns |
+| [Best practices](docs/best-practices.md) | Model design, migrations, concurrency, security |
+| [Performance tuning](docs/performance-tuning.md) | Batch writes, indexes, LiveQuery, profiling |
+| [Turso features in Apple apps](docs/turso-features-in-apple-apps.md) | FTS, vector search, MV, encryption, MVCC, multi-process WAL |
+| [Agent cookbook](docs/agent-cookbook.md) | Common tasks and anti-patterns for humans and agents |
 | [Architecture](docs/advanced/boutiquedb-architecture.md) | Layers & concurrency |
 | [Migrations](docs/guides/migrations.md) | Append-only schema |
+| [CloudKit sync](docs/guides/cloudkit-sync.md) | Setup, conflicts, status |
 | [App template](docs/guides/app-template.md) | Safe app bootstrap |
 | [CloudKit QA](docs/contributors/cloudkit-qa-checklist.md) | Sync checklist |
 | [DocC catalog](Sources/BoutiqueDB/BoutiqueDB.docc/BoutiqueDB.md) | API, sync, operations |
@@ -145,9 +152,11 @@ Installable skills for agent users are in [`skills/`](skills/):
 
 ```bash
 npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-getting-started --agent pochi -y --copy
+npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-swiftui --agent pochi -y --copy
 npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-architecture --agent pochi -y --copy
 npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-sync --agent pochi -y --copy
 npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-open-options --agent pochi -y --copy
+npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-turso-features --agent pochi -y --copy
 npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-contributing --agent pochi -y --copy
 ```
 
