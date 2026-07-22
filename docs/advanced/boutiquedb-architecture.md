@@ -17,7 +17,7 @@ BoutiqueDB (@MainActor)          ← open + migrate + LiveQuery host
    └── SyncAdapter               ← CloudKit (default) or future adapters
         │
         ▼
-TursoKit → CTursoSQLite3 → libturso_sqlite3 (bindings/c)
+TursoKit → CTursoSDK → libturso_sdk_kit (sdk-kit)
 ```
 
 ## Concurrency rules (BD-014 / BD-005)
@@ -37,12 +37,12 @@ TursoKit → CTursoSQLite3 → libturso_sqlite3 (bindings/c)
 
 | Concern | Doc / type |
 |---|---|
-| Migrations | [Migrations.md](Migrations.md), `BoutiqueMigrationPlan` |
+| Migrations | [Migrations](../guides/migrations.md), `BoutiqueMigrationPlan` |
 | Observation | `LiveQuery`, `TursoStore` |
 | Turso FTS / vector | `@FTSIndex`, `@VectorIndex`, `vectorDistance*`, `.match` |
-| CloudKit | [CloudKit-QA-Checklist.md](CloudKit-QA-Checklist.md), `CloudKitSyncAdapter` |
+| CloudKit | [CloudKit QA](cloudkit-qa-checklist.md), `CloudKitSyncAdapter` |
 | Capabilities | `TursoCapabilities.probe` |
-| Benchmarks | [Sync-Benchmarks.md](Sync-Benchmarks.md) |
+| Benchmarks | [Sync benchmarks](sync-benchmarks.md) |
 
 ## Module products
 

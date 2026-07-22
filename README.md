@@ -92,7 +92,7 @@ let database = try await BoutiqueDB.open(url: url, migrations: AppMigrations.pla
 prepareDependencies { $0.boutiqueDB = database }
 ```
 
-Open options (official Turso flags): see **[docs/Turso-Open-Options.md](docs/Turso-Open-Options.md)**.
+Open options (official Turso flags): see **[docs/getting-started/open-options.md](docs/getting-started/open-options.md)**.
 
 ```swift
 // Default: .tursoEnhanced (views, index_method, …)
@@ -119,20 +119,37 @@ let db = try BoutiqueDB(url: url, openOptions: .tursoEnhancedAsync)
 - Host capabilities: Push Notifications + `remote-notification` background mode
 - Container: explicit identifier or injected `CKContainer` (no fallback)
 - Attach: `BoutiqueDBSyncEngine.attach(to:automaticallyDrain: true)`
-- QA: [docs/CloudKit-QA-Checklist.md](docs/CloudKit-QA-Checklist.md)
+- QA: [docs/contributors/cloudkit-qa-checklist.md](docs/contributors/cloudkit-qa-checklist.md)
 - Account switches preserve local rows and reset sync metadata; the host owns account UI/policy.
 
 ## Docs (prod-ready)
 
+The `docs/` directory is the source for both Mintlify and GitBook.
+
 | Doc | Topic |
 |-----|--------|
-| [Turso-Open-Options](docs/Turso-Open-Options.md) | Official feature flags + asyncIO |
-| [Architecture](docs/Architecture.md) | Layers & concurrency |
-| [Migrations](docs/Migrations.md) | Append-only schema |
-| [App-Template](docs/App-Template.md) | Safe app bootstrap |
-| [CloudKit QA](docs/CloudKit-QA-Checklist.md) | Sync checklist |
+| [Introduction](docs/index.md) | What BoutiqueDB is |
+| [Stack](docs/stack.md) | Layers & modules |
+| [Quick start](docs/getting-started/quick-start.md) | Install, model, migrate, write, observe |
+| [Open options](docs/getting-started/open-options.md) | Official feature flags + asyncIO |
+| [Architecture](docs/advanced/boutiquedb-architecture.md) | Layers & concurrency |
+| [Migrations](docs/guides/migrations.md) | Append-only schema |
+| [App template](docs/guides/app-template.md) | Safe app bootstrap |
+| [CloudKit QA](docs/contributors/cloudkit-qa-checklist.md) | Sync checklist |
 | [DocC catalog](Sources/BoutiqueDB/BoutiqueDB.docc/BoutiqueDB.md) | API, sync, operations |
 | [Security policy](SECURITY.md) | Private vulnerability reporting and scope |
+
+## Agent skills
+
+Installable skills for agent users are in [`skills/`](skills/):
+
+```bash
+npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-getting-started --agent pochi -y --copy
+npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-architecture --agent pochi -y --copy
+npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-sync --agent pochi -y --copy
+npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-open-options --agent pochi -y --copy
+npx skills add tuliopc23/BoutiqueDB-Swift@boutiquedb-contributing --agent pochi -y --copy
+```
 
 ## Build engine (maintainers)
 

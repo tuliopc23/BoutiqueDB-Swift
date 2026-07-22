@@ -15,7 +15,7 @@ From Turso docs (`experimental-features.mdx`):
 
 `views` · `custom_types` · `encryption` · `index_method` · `autovacuum` · `vacuum` · `attach` · `generated_columns` · `without_rowid` · `multiprocess_wal` · `mvcc_passive_checkpoint`
 
-Mapped in Swift as ``TursoExperimentalFeature``.
+Mapped in Swift as `TursoExperimentalFeature`.
 
 ## BoutiqueDB defaults
 
@@ -60,7 +60,7 @@ try await db.write { conn in
 }
 ```
 
-Import/markdown: parse off MainActor, then `await db.write` — UI stays free; engine IO cooperates with Swift concurrency.
+With `asyncIO` enabled, parsing and writes happen off `MainActor`; the engine yields I/O ticks so the UI stays free.
 
 ## Policy
 

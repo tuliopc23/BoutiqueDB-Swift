@@ -1,0 +1,102 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "BoutiqueDB",
+  "colors": {
+    "primary": "#4F46E5",
+    "light": "#818CF8",
+    "dark": "#312E81"
+  },
+  "favicon": "/favicon.png",
+  "logo": {
+    "light": "/logo/light.png",
+    "dark": "/logo/dark.png"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Overview",
+        "icon": "book-open",
+        "pages": [
+          "index",
+          "stack",
+          "why-boutiquedb",
+          "sqlite-comparison",
+          "sync-overview"
+        ]
+      },
+      {
+        "group": "Getting Started",
+        "icon": "rocket",
+        "pages": [
+          "getting-started/installation",
+          "getting-started/quick-start",
+          "getting-started/open-options"
+        ]
+      },
+      {
+        "group": "Guides",
+        "icon": "map",
+        "pages": [
+          "guides/models-and-tables",
+          "guides/live-queries",
+          "guides/migrations",
+          "guides/app-template",
+          "guides/cloudkit-sync",
+          "guides/fts-and-vector",
+          "guides/concurrency",
+          "guides/testing"
+        ]
+      },
+      {
+        "group": "Advanced",
+        "icon": "microchip",
+        "pages": [
+          "advanced/boutiquedb-architecture",
+          "advanced/engine-architecture",
+          "advanced/sdk-kit-c-abi",
+          "advanced/sync-protocol",
+          "advanced/experimental-features"
+        ]
+      },
+      {
+        "group": "Contributors",
+        "icon": "code",
+        "pages": [
+          "contributors/build-engine",
+          "contributors/multi-arch-packaging",
+          "contributors/spi-checklist",
+          "contributors/testing",
+          "contributors/cloudkit-qa-checklist",
+          "contributors/publishing",
+          "contributors/sync-benchmarks"
+        ]
+      },
+      {
+        "group": "Agent Skills",
+        "icon": "robot",
+        "pages": [
+          "skills"
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/tuliopc23/BoutiqueDB-Swift"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get Started",
+      "href": "/getting-started/quick-start"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/tuliopc23/BoutiqueDB-Swift"
+    }
+  }
+}

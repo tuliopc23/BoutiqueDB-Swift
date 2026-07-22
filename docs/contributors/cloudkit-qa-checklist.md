@@ -59,4 +59,4 @@ Use this for release candidates. Automated tests cover the offline path (`enable
 |---|---|---|---|
 | | | | |
 
-See also: `docs/Sync-Benchmarks.md`.
+See also: [Sync benchmarks](sync-benchmarks.md).

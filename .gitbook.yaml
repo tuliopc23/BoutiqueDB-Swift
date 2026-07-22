@@ -1,0 +1,3 @@
+root: ./docs
+title: BoutiqueDB
+description: Local-first Swift persistence on Turso — SQLiteData-style DX, CDC LiveQuery, CloudKit, and official Turso engine features.
