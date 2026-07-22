@@ -2,6 +2,15 @@
 
 Swift package: local-first persistence on Turso (sdk-kit), LiveQuery, CloudKit.
 
+
+## Scope (Swift only)
+
+This package is for **Swift / Apple apps** (iOS + macOS) via SPM / SPI only.
+
+- **Do not** add .NET, Java, Python, Go, npm, crates.io, or other registry publish workflows.
+- **Do not** mirror upstream Turso multi-language binding CI into this repo.
+- Engine monorepo (`BoutiqueDB`) is a private build input for `sdk-kit`; product surface is this Swift package.
+
 ## Permanent packaging rule (SPI / App Store)
 
 **Always ship and validate both iOS and macOS.** Do not treat macOS-only
