@@ -10,8 +10,11 @@
 ///   var body: String
 /// }
 /// ```
-@attached(member, names: named(boutiqueTableName), named(boutiqueCreateStatements))
-@attached(extension, conformances: BoutiqueSchema)
+@attached(
+  member,
+  names: named(boutiqueTableName), named(boutiqueCreateStatements), named(boutiqueColumns)
+)
+@attached(extension, conformances: BoutiqueSchema, BoutiqueSchemaColumns)
 public macro BoutiqueTable(
   name: String? = nil,
   withoutRowid: Bool = false,

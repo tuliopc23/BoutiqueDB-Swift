@@ -16,8 +16,8 @@ struct CDCContractTests {
       url: url,
       startListening: false,
       enableCDC: true,
-      concurrentWrites: true
-    )
+      concurrentWrites: true)
+    defer { db.close() }
     try await db.execute(
       """
       CREATE TABLE notes (
@@ -53,6 +53,7 @@ struct CDCContractTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let db = try BoutiqueDB(url: url, startListening: false, enableCDC: true)
+    defer { db.close() }
     try await db.execute(
       """
       CREATE TABLE notes (
@@ -87,6 +88,7 @@ struct CDCContractTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let db = try BoutiqueDB(url: url, startListening: false, enableCDC: true)
+    defer { db.close() }
     try await db.execute(
       """
       CREATE TABLE notes (

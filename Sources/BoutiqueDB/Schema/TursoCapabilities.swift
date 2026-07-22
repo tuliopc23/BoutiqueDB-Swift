@@ -31,10 +31,13 @@ public struct TursoCapabilities: Sendable, Equatable {
   /// Probe a live connection with cheap SQL capability checks.
   public static func probe(on connection: TursoConnection) -> TursoCapabilities {
     var caps = TursoCapabilities.unknown
+    let options = connection.database?.openOptions
     caps.cdc = probeCDC(on: connection)
-    caps.generatedColumns = true
-    caps.multiProcessWAL = false  // BD-004 — requires Builder / C setter
-    caps.encryption = false  // BD-001 — C open path does not wire cipher yet
+    caps.generatedColumns = options?.experimentalFeatures.contains(.generatedColumns) == true
+    caps.multiProcessWAL = options?.experimentalFeatures.contains(.multiprocessWAL) == true
+    caps.encryption = options?.experimentalFeatures.contains(.encryption) == true
+      && options?.encryptionCipher?.isEmpty == false
+      && options?.encryptionHexKey?.isEmpty == false
 
     caps.vectorFunctions =
       (try? connection.queryOne("SELECT vector32('[1.0,0.0]') IS NOT NULL AS ok")?["ok"]?
@@ -43,9 +46,9 @@ public struct TursoCapabilities: Sendable, Equatable {
     caps.ftsIndex = probeFTS(on: connection)
     caps.vectorIndex = probeVectorIndex(on: connection)
     caps.materializedViews = probeMaterializedView(on: connection)
-    caps.mvcc = probeMVCC(on: connection)
-    // Do not claim encryption from PRAGMA alone when open path cannot set keys.
-    _ = probeEncryption(on: connection)
+    // MVCC cannot be safely probed on the CDC connection. BoutiqueDB verifies
+    // it when opening the dedicated concurrent-writer handle.
+    caps.mvcc = false
 
     return caps
   }
@@ -132,27 +135,4 @@ public struct TursoCapabilities: Sendable, Equatable {
     }
   }
 
-  private static func probeMVCC(on connection: TursoConnection) -> Bool {
-    do {
-      try connection.execute("SAVEPOINT boutique_mvcc")
-      defer {
-        try? connection.execute("ROLLBACK TO boutique_mvcc")
-        try? connection.execute("RELEASE boutique_mvcc")
-      }
-      try connection.execute("BEGIN CONCURRENT")
-      try connection.execute("ROLLBACK")
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  private static func probeEncryption(on connection: TursoConnection) -> Bool {
-    do {
-      _ = try connection.query("PRAGMA hexkey")
-      return true
-    } catch {
-      return false
-    }
-  }
 }

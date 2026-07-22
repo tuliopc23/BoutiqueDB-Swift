@@ -20,6 +20,8 @@ public enum ChangeEvent: Sendable, Equatable {
 public final class TursoStore {
   public private(set) var generation: UInt64 = 0
   public private(set) var lastChangeID: Int64 = 0
+  /// Latest CDC listener failure. A later successful poll clears it.
+  public private(set) var listenerError: String?
 
   /// Convenience multi-consumer stream (each access creates a new subscription).
   public var changes: AsyncStream<ChangeEvent> { subscribe() }
@@ -33,7 +35,7 @@ public final class TursoStore {
 
   public init(
     connection: TursoConnection,
-    idlePollInterval: Duration = .milliseconds(50)
+    idlePollInterval: Duration = .milliseconds(250)
   ) {
     self.connection = connection
     self.idlePollInterval = idlePollInterval
@@ -76,18 +78,29 @@ public final class TursoStore {
     let idlePollInterval = self.idlePollInterval
     var last = lastChangeID
 
-    listenerTask = Task { [weak self] in
+    listenerTask = Task.detached(priority: .utility) { [weak self] in
       while !Task.isCancelled {
-        let maxID = (try? Self.maxChangeID(on: connection)) ?? last
-        if maxID > last {
-          last = maxID
-          await MainActor.run { [weak self] in
-            guard let self else { return }
-            self.lastChangeID = maxID
-            self.invalidate()
+        do {
+          let maxID = try Self.maxChangeID(on: connection)
+          if maxID > last {
+            last = maxID
+            await MainActor.run { [weak self] in
+              guard let self else { return }
+              self.listenerError = nil
+              self.lastChangeID = maxID
+              self.invalidate()
+            }
+          } else {
+            await MainActor.run { [weak self] in self?.listenerError = nil }
+            try await Task.sleep(for: idlePollInterval)
           }
-        } else {
-          try? await Task.sleep(for: idlePollInterval)
+        } catch is CancellationError {
+          return
+        } catch {
+          await MainActor.run { [weak self] in
+            self?.listenerError = String(describing: error)
+          }
+          try? await Task.sleep(for: .seconds(1))
         }
       }
     }
@@ -101,10 +114,15 @@ public final class TursoStore {
   /// Advances from CDC once and invalidates if new rows appeared.
   /// Useful for tests that drive a single connection without waiting on the listener.
   public func advanceFromCDC() {
-    guard let maxID = try? Self.maxChangeID(on: connection) else { return }
-    if maxID > lastChangeID {
-      lastChangeID = maxID
-      invalidate()
+    do {
+      let maxID = try Self.maxChangeID(on: connection)
+      listenerError = nil
+      if maxID > lastChangeID {
+        lastChangeID = maxID
+        invalidate()
+      }
+    } catch {
+      listenerError = String(describing: error)
     }
   }
 

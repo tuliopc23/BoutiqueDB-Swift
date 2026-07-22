@@ -5,14 +5,30 @@ import Foundation
 /// - Important: Once a migration `id` has shipped to users, never change its body.
 public struct BoutiqueMigration: Sendable {
   public let id: String
-  public let migrate: @Sendable (BoutiqueDB) async throws -> Void
+  let body: Body
+
+  enum Body: Sendable {
+    case transactional(@Sendable (inout BoutiqueDBConnection) throws -> Void)
+    case asynchronous(@Sendable (BoutiqueDB) async throws -> Void)
+  }
 
   public init(
     _ id: String,
     migrate: @escaping @Sendable (BoutiqueDB) async throws -> Void
   ) {
     self.id = id
-    self.migrate = migrate
+    self.body = .asynchronous(migrate)
+  }
+
+  /// Creates a migration whose schema/data changes and tracking record commit
+  /// in one database transaction. Prefer this form whenever the migration can
+  /// be expressed through ``BoutiqueDBConnection``.
+  public init(
+    _ id: String,
+    transaction: @escaping @Sendable (inout BoutiqueDBConnection) throws -> Void
+  ) {
+    self.id = id
+    self.body = .transactional(transaction)
   }
 }
 
@@ -74,7 +90,11 @@ public struct BoutiqueMigrator: Sendable {
     )
     """
 
-  public init() {}
+  private let now: @Sendable () -> Date
+
+  public init(now: @escaping @Sendable () -> Date = Date.init) {
+    self.now = now
+  }
 
   /// Ensures the tracking table exists.
   public func prepareTracking(on db: BoutiqueDB) async throws {
@@ -85,7 +105,7 @@ public struct BoutiqueMigrator: Sendable {
     try await prepareTracking(on: db)
     let rows = try await db.read { conn in
       try conn.query(
-        "SELECT id FROM boutique_schema_migrations ORDER BY applied_at ASC, id ASC"
+        "SELECT id FROM boutique_schema_migrations ORDER BY rowid ASC"
       )
     }
     return rows.compactMap { $0["id"]?.stringValue }
@@ -103,13 +123,16 @@ public struct BoutiqueMigrator: Sendable {
   /// - Returns: IDs that were applied in this call.
   @discardableResult
   public func migrate(db: BoutiqueDB, plan: BoutiqueMigrationPlan) async throws -> [String] {
+    try validate(plan: plan)
     try await prepareTracking(on: db)
 
     if plan.eraseDatabaseOnSchemaChange {
       try await maybeEraseOnSchemaChange(db: db, plan: plan)
     }
 
-    let applied = Set(try await appliedIdentifiers(on: db))
+    let appliedIdentifiers = try await appliedIdentifiers(on: db)
+    try validateAppliedHistory(appliedIdentifiers, plan: plan)
+    let applied = Set(appliedIdentifiers)
     var newlyApplied: [String] = []
 
     for migration in plan.migrations {
@@ -124,14 +147,28 @@ public struct BoutiqueMigrator: Sendable {
       // ensureColumn, etc.). Prefer ``BoutiqueDB/write`` for multi-statement DML
       // that should roll back together.
       do {
-        try await migration.migrate(db)
-        try await db.execute(
-          """
-          INSERT INTO boutique_schema_migrations (id, applied_at)
-          VALUES (?, ?)
-          """,
-          [.text(migration.id), .double(Date().timeIntervalSince1970)]
-        )
+        switch migration.body {
+        case .transactional(let body):
+          try await db.write { connection in
+            try body(&connection)
+            try connection.execute(
+              """
+              INSERT INTO boutique_schema_migrations (id, applied_at)
+              VALUES (?, ?)
+              """,
+              [.text(migration.id), .double(now().timeIntervalSince1970)]
+            )
+          }
+        case .asynchronous(let body):
+          try await body(db)
+          try await db.execute(
+            """
+            INSERT INTO boutique_schema_migrations (id, applied_at)
+            VALUES (?, ?)
+            """,
+            [.text(migration.id), .double(now().timeIntervalSince1970)]
+          )
+        }
         newlyApplied.append(migration.id)
       } catch {
         throw BoutiqueError.migrationFailed(
@@ -152,21 +189,43 @@ public struct BoutiqueMigrator: Sendable {
     let registeredSet = Set(registered)
     let unknown = appliedSet.subtracting(registeredSet)
     if !unknown.isEmpty {
-      try eraseDatabaseFile(at: db.url)
-      // Caller must re-open; signal via error.
       throw BoutiqueError.schemaErasedForDebug(
         "eraseDatabaseOnSchemaChange: unknown applied ids \(unknown.sorted())"
       )
     }
   }
 
-  private func eraseDatabaseFile(at url: URL) throws {
+  static func eraseDatabaseFiles(at url: URL) throws {
     let fm = FileManager.default
     for suffix in ["", "-wal", "-shm"] {
       let path = url.path + suffix
       if fm.fileExists(atPath: path) {
         try fm.removeItem(atPath: path)
       }
+    }
+  }
+
+  private func validate(plan: BoutiqueMigrationPlan) throws {
+    let ids = plan.migrations.map(\.id)
+    if ids.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+      throw BoutiqueError.invalidMigrationPlan("Migration identifiers must not be empty")
+    }
+    if Set(ids).count != ids.count {
+      throw BoutiqueError.invalidMigrationPlan("Migration identifiers must be unique")
+    }
+  }
+
+  private func validateAppliedHistory(
+    _ applied: [String],
+    plan: BoutiqueMigrationPlan
+  ) throws {
+    let registered = plan.migrations.map(\.id)
+    guard applied.count <= registered.count,
+      Array(registered.prefix(applied.count)) == applied
+    else {
+      throw BoutiqueError.invalidMigrationPlan(
+        "Applied migrations must remain an unchanged prefix of the registered plan"
+      )
     }
   }
 }

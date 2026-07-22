@@ -3,17 +3,19 @@ import CompilerPluginSupport
 import Foundation
 import PackageDescription
 
-// Turso engine: official sdk-kit, binary xcframework (no unsafeFlags).
+// Turso engine: official sdk-kit, multi-arch binary xcframework (no unsafeFlags).
+//
+// ALWAYS ship macOS + iOS device + iOS Simulator (see AGENTS.md).
+//   ./Scripts/build-turso-sdk-xcframework.sh   # SLICES=all by default
 //
 // Distribution (SPI / consumers):
 //   GitHub Release asset TursoSDK.xcframework.zip + checksum below.
-// Local maintainer (before/without network release):
-//   ./Scripts/build-turso-sdk-xcframework.sh
+// Local maintainer:
 //   BOUTIQUE_LOCAL_TURSO_SDK=1 swift test
 
-let tursoSDKVersion = "0.2.0"
-let tursoSDKChecksum = "78f162a2763cdd843c6860652b667e53c9c257ed9f1bb0e64830a10650432fb2"
-// Release tag is `v0.2.0` (release.yml); asset path must include the `v` prefix.
+let tursoSDKVersion = "0.2.1"
+let tursoSDKChecksum = "0eac7ae71f31fbe5ab211575cbbb06ec8d37632003e989bcde3757f365c25e19"
+// Release tag is `v0.2.1` (release.yml); asset path must include the `v` prefix.
 let tursoSDKURL =
   "https://github.com/tuliopc23/BoutiqueDB-Swift/releases/download/v\(tursoSDKVersion)/TursoSDK.xcframework.zip"
 
@@ -99,7 +101,6 @@ var packageTargets: [Target] = [
       "TursoObservation",
       "BoutiqueDBMacros",
       .product(name: "Dependencies", package: "swift-dependencies"),
-      .product(name: "Perception", package: "swift-perception"),
     ]
   ),
 ]
@@ -120,7 +121,6 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/pointfreeco/swift-structured-queries", from: "0.33.0"),
     .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.0.0"),
-    .package(url: "https://github.com/pointfreeco/swift-perception", from: "1.0.0"),
     .package(url: "https://github.com/pointfreeco/swift-snapshot-testing", from: "1.17.0"),
     .package(url: "https://github.com/pointfreeco/swift-macro-testing", from: "0.6.0"),
     .package(url: "https://github.com/swiftlang/swift-syntax", "600.0.0"..<"605.0.0"),

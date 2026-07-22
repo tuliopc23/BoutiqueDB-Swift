@@ -22,7 +22,7 @@ Inspired by [SQLiteData](https://github.com/pointfreeco/sqlite-data) — without
 ```swift
 // Package.swift
 dependencies: [
-  .package(url: "https://github.com/tuliopc23/BoutiqueDB-Swift.git", from: "0.2.0"),
+  .package(url: "https://github.com/tuliopc23/BoutiqueDB-Swift.git", from: "0.2.1"),
 ],
 targets: [
   .target(
@@ -36,14 +36,14 @@ targets: [
 
 Xcode: **File → Add Package Dependencies…** → `https://github.com/tuliopc23/BoutiqueDB-Swift` → product **BoutiqueDB**.
 
-> **Engine binary:** SPM downloads `TursoSDK.xcframework.zip` from GitHub Releases (sdk-kit, no `unsafeFlags`). Maintainers: `./Scripts/build-turso-sdk-xcframework.sh` then set `BOUTIQUE_LOCAL_TURSO_SDK=1` for local path override.
+> **Engine binary:** SPM downloads multi-arch `TursoSDK.xcframework.zip` from GitHub Releases (macOS + iOS device + Simulator, sdk-kit, no `unsafeFlags`). Maintainers: `./Scripts/build-turso-sdk-xcframework.sh` (always full multi-arch by default).
 
 ## Platforms
 
-| Platform | Minimum |
-|----------|---------|
-| iOS | 17.0 |
-| macOS | 14.0 |
+| Platform | Minimum | Binary slices |
+|----------|---------|---------------|
+| iOS | 17.0 | device arm64 + Simulator arm64/x86_64 |
+| macOS | 14.0 | arm64 + x86_64 universal |
 
 ## Products
 
@@ -74,6 +74,14 @@ try await db.write { conn in
 }
 
 let rows = try await db.fetchAll(Note.self)
+```
+
+When using `swift-dependencies`, open the database first and then register the
+already-created value. `prepareDependencies` is synchronous:
+
+```swift
+let database = try await BoutiqueDB.open(url: url, migrations: AppMigrations.plan)
+prepareDependencies { $0.boutiqueDB = database }
 ```
 
 Open options (official Turso flags): see **[docs/Turso-Open-Options.md](docs/Turso-Open-Options.md)**.

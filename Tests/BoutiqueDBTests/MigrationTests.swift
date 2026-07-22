@@ -34,8 +34,8 @@ struct MigrationTests {
     let db1 = try await BoutiqueDB.open(
       url: url,
       startListening: false,
-      migrations: plan
-    )
+      migrations: plan)
+    defer { db1.close() }
     let applied1 = try await db1.appliedMigrations()
     #expect(applied1 == ["v1_create_items", "v2_add_body"])
     #expect(try await db1.tableExists("items"))
@@ -45,8 +45,8 @@ struct MigrationTests {
     let db2 = try await BoutiqueDB.open(
       url: url,
       startListening: false,
-      migrations: plan
-    )
+      migrations: plan)
+    defer { db2.close() }
     let applied2 = try await db2.appliedMigrations()
     #expect(applied2 == applied1)
   }
@@ -56,6 +56,7 @@ struct MigrationTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
     try await db.execute(
       "CREATE TABLE t (id TEXT PRIMARY KEY NOT NULL)"
     )
@@ -84,6 +85,7 @@ struct MigrationTests {
       }
     }
     let db = try await BoutiqueDB.open(url: url, startListening: false, migrations: v2)
+    defer { db.close() }
     #expect(try await db.appliedMigrations() == ["v1", "v2"])
     #expect(try await db.columnExists(table: "t", name: "n"))
   }
@@ -98,6 +100,7 @@ struct MigrationTests {
       }
     }
     let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
     do {
       _ = try await db.migrate(using: plan)
       Issue.record("expected failure")
@@ -130,8 +133,8 @@ struct MigrationTests {
       url: url,
       startListening: false,
       schemaModels: [ItemsSchema.self],
-      schemaSync: .additiveOnly
-    )
+      schemaSync: .additiveOnly)
+    defer { db.close() }
     #expect(try await db.tableExists("items"))
   }
 
@@ -159,6 +162,72 @@ struct MigrationTests {
       }
     }
     let db = try await BoutiqueDB.open(url: url, startListening: false, migrations: plan)
+    defer { db.close() }
     #expect(try await db.tableExists("manual_notes"))
+  }
+
+  @Test func duplicateMigrationIdentifiersAreRejected() async throws {
+    let url = tempURL()
+    let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: url)
+    }
+    let plan = BoutiqueMigrationPlan {
+      BoutiqueMigration("duplicate", transaction: { _ in })
+      BoutiqueMigration("duplicate", transaction: { _ in })
+    }
+    await #expect(throws: BoutiqueError.self) {
+      try await db.migrate(using: plan)
+    }
+  }
+
+  @Test func transactionalMigrationRollsBackBodyAndTrackingTogether() async throws {
+    let url = tempURL()
+    let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: url)
+    }
+    let plan = BoutiqueMigrationPlan {
+      BoutiqueMigration(
+        "atomic",
+        transaction: { connection in
+          try connection.execute("CREATE TABLE atomic_items (id INTEGER PRIMARY KEY)")
+          try connection.execute("THIS IS NOT SQL")
+        })
+    }
+    await #expect(throws: BoutiqueError.self) {
+      try await db.migrate(using: plan)
+    }
+    #expect(!(try await db.tableExists("atomic_items")))
+    #expect(!(try await db.appliedMigrations().contains("atomic")))
+  }
+
+  @Test func appliedMigrationHistoryCannotBeReordered() async throws {
+    let url = tempURL()
+    let initial = BoutiqueMigrationPlan {
+      BoutiqueMigration(
+        "v1",
+        transaction: { connection in
+          try connection.execute("CREATE TABLE history_items (id INTEGER PRIMARY KEY)")
+        })
+      BoutiqueMigration("v2", transaction: { _ in })
+    }
+    let db = try await BoutiqueDB.open(url: url, startListening: false, migrations: initial)
+    defer { db.close() }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: url)
+    }
+    let reordered = BoutiqueMigrationPlan {
+      BoutiqueMigration("v2", transaction: { _ in })
+      BoutiqueMigration("v1", transaction: { _ in })
+    }
+    await #expect(throws: BoutiqueError.self) {
+      try await db.migrate(using: reordered)
+    }
   }
 }

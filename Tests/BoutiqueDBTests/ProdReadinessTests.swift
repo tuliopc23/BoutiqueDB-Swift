@@ -24,6 +24,7 @@ struct ProdReadinessTests {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
     let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
     try await db.execute(
       """
       CREATE TABLE prNotes (
@@ -40,6 +41,7 @@ struct ProdReadinessTests {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
     let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
     try await db.execute(
       """
       CREATE TABLE prNotes (
@@ -66,6 +68,7 @@ struct ProdReadinessTests {
       }
     }
     let db = try await BoutiqueDB.open(url: url, startListening: false, migrations: plan)
+    defer { db.close() }
     let done = try await BoutiqueMigrator().hasCompletedMigrations(on: db, plan: plan)
     #expect(done)
   }
@@ -74,6 +77,7 @@ struct ProdReadinessTests {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
     let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
     try await db.execute(
       "CREATE TABLE columnItems (id TEXT PRIMARY KEY NOT NULL)"
     )
@@ -101,8 +105,8 @@ struct ProdReadinessTests {
       url: url,
       startListening: false,
       enableCDC: false,
-      concurrentWrites: true
-    )
+      concurrentWrites: true)
+    defer { db.close() }
     try await db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
     try await db.beginConcurrent()
     await #expect(throws: BoutiqueError.transactionInProgress) {
@@ -115,6 +119,7 @@ struct ProdReadinessTests {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
     let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
     try await db.execute("CREATE TABLE doomed (id INTEGER PRIMARY KEY)")
     try await db.dropTableIfExists("doomed")
     let exists = try await db.tableExists("doomed")
@@ -132,6 +137,7 @@ struct ProdReadinessTests {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
     let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
     try await db.execute(
       """
       CREATE TABLE prNotes (
@@ -166,6 +172,10 @@ struct ProdReadinessTests {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
     let conn = try TursoDatabase(url: url).connect(enableCDC: true)
+    defer { conn.close() }
+    try conn.execute(
+      "CREATE TABLE notes (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL)"
+    )
     // Offline engine (no live CK container) — still exercises status mapping.
     let engine = try TursoCKSyncEngine(
       connection: conn,
@@ -194,7 +204,7 @@ struct ProdReadinessTests {
     defer { try? FileManager.default.removeItem(at: url) }
     let conn = try TursoDatabase(url: url).connect(enableCDC: false)
     #expect(!conn.isApplyingRemoteChanges)
-    try conn.withSynchronizingFlag {
+    conn.withSynchronizingFlag {
       #expect(conn.isApplyingRemoteChanges)
     }
     #expect(!conn.isApplyingRemoteChanges)
@@ -206,8 +216,8 @@ struct ProdReadinessTests {
     let db = try BoutiqueDB(
       url: url,
       startListening: false,
-      openOptions: .tursoEnhancedAsync
-    )
+      openOptions: .tursoEnhancedAsync)
+    defer { db.close() }
     #expect(db.unsafeConnection.usesAsyncIO)
     try await db.execute(
       """
@@ -227,5 +237,19 @@ struct ProdReadinessTests {
       try conn.query("SELECT title FROM asyncNotes WHERE id = ?", [.text("a1")])
     }
     #expect(rows.first?["title"]?.stringValue == "async")
+  }
+
+  @Test func seamlessOpenPreservesEngineOptions() async throws {
+    let url = tempURL()
+    let db = try await BoutiqueDB.open(
+      url: url,
+      startListening: false,
+      openOptions: .tursoEnhancedAsync)
+    defer { db.close() }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: url)
+    }
+    #expect(db.unsafeConnection.usesAsyncIO)
   }
 }

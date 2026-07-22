@@ -24,8 +24,8 @@ public struct SyncedTable: Sendable, Hashable {
     self.recordType = recordType ?? CKRecord.RecordType(name)
   }
 
-  public func recordName(forRowPK rowPK: String) -> String {
-    RecordIdentity.recordName(table: name, rowPK: rowPK)
+  public func recordName(forRowPK rowPK: String) throws -> String {
+    try RecordIdentity.recordName(table: name, rowPK: rowPK)
   }
 
   public func parseRecordName(_ recordName: String) -> String? {
@@ -34,11 +34,17 @@ public struct SyncedTable: Sendable, Hashable {
 }
 
 enum RecordIdentity {
-  static func recordName(table: String, rowPK: String) -> String {
-    // CloudKit: no leading underscore, ≤ 255 chars.
+  static func recordName(table: String, rowPK: String) throws -> String {
     let raw = "\(table):\(rowPK)"
-    precondition(!raw.hasPrefix("_"))
-    precondition(raw.count <= 255)
+    guard !rowPK.isEmpty else {
+      throw TursoCKSyncError.invalidRecordName("primary key is empty")
+    }
+    guard !raw.hasPrefix("_") else {
+      throw TursoCKSyncError.invalidRecordName("record names cannot start with '_'")
+    }
+    guard raw.utf8.count <= 255 else {
+      throw TursoCKSyncError.invalidRecordName("record name exceeds 255 UTF-8 bytes")
+    }
     return raw
   }
 
@@ -53,6 +59,49 @@ enum RecordIdentity {
   static func rowPK(table: String, recordName: String) -> String? {
     guard let parsed = parse(recordName), parsed.table == table else { return nil }
     return parsed.rowPK
+  }
+}
+
+/// Configuration and durability failures detected before CloudKit state is advanced.
+public enum TursoCKSyncError: Error, Sendable, Equatable, LocalizedError {
+  case missingCloudKitContainer
+  case invalidConfiguration(String)
+  case invalidRecordName(String)
+  case tableNotFound(String)
+  case columnNotFound(table: String, column: String)
+  case primaryKeyRequired(table: String, column: String)
+  case compoundPrimaryKeyUnsupported(table: String)
+  case autoIncrementPrimaryKeyUnsupported(table: String)
+  case uniqueConstraintUnsupported(table: String, index: String)
+  case unsupportedColumnType(table: String, column: String, type: String)
+  case incompatibleSchemaMigration(table: String, reason: String)
+  case unresolvedPrimaryKey(table: String, changeID: Int64)
+
+  public var errorDescription: String? {
+    switch self {
+    case .missingCloudKitContainer:
+      return "CloudKit sync requires an explicit container identifier or injected CKContainer"
+    case .invalidConfiguration(let message), .invalidRecordName(let message):
+      return message
+    case .tableNotFound(let table):
+      return "Synced table '\(table)' does not exist"
+    case .columnNotFound(let table, let column):
+      return "Synced column '\(table).\(column)' does not exist"
+    case .primaryKeyRequired(let table, let column):
+      return "Synced table '\(table)' requires '\(column)' to be its primary key"
+    case .compoundPrimaryKeyUnsupported(let table):
+      return "Synced table '\(table)' cannot use a compound primary key"
+    case .autoIncrementPrimaryKeyUnsupported(let table):
+      return "Synced table '\(table)' cannot use AUTOINCREMENT"
+    case .uniqueConstraintUnsupported(let table, let index):
+      return "Synced table '\(table)' has unsupported unique index '\(index)'"
+    case .unsupportedColumnType(let table, let column, let type):
+      return "Synced column '\(table).\(column)' has unsupported SQLite type '\(type)'"
+    case .incompatibleSchemaMigration(let table, let reason):
+      return "Synced table '\(table)' changed incompatibly: \(reason)"
+    case .unresolvedPrimaryKey(let table, let changeID):
+      return "Cannot resolve the primary key for '\(table)' CDC change \(changeID)"
+    }
   }
 }
 
@@ -106,5 +155,62 @@ public struct TursoCKSyncConfiguration: Sendable {
 
   public var syncedTableNames: Set<String> {
     Set(syncedTables.map(\.name))
+  }
+
+  func validate(hasInjectedContainer: Bool) throws {
+    if enablesCloudKit && containerIdentifier == nil && !hasInjectedContainer {
+      throw TursoCKSyncError.missingCloudKitContainer
+    }
+    guard !zoneName.isEmpty else {
+      throw TursoCKSyncError.invalidConfiguration("CloudKit zone name cannot be empty")
+    }
+    guard !syncedTables.isEmpty else {
+      throw TursoCKSyncError.invalidConfiguration("At least one synced table is required")
+    }
+
+    let reservedFields: Set<String> = [
+      "creationDate", "creatorUserRecordID", "etag", "lastModifiedUserRecordID",
+      "modificationDate", "modifiedByDevice", "recordChangeTag", "recordID", "recordType",
+    ]
+    var tableNames = Set<String>()
+    var recordTypes = Set<CKRecord.RecordType>()
+    for table in syncedTables {
+      guard !table.name.isEmpty, !table.name.hasPrefix("_") else {
+        throw TursoCKSyncError.invalidConfiguration(
+          "Synced table names cannot be empty or start with '_': '\(table.name)'"
+        )
+      }
+      guard !table.primaryKeyColumn.isEmpty else {
+        throw TursoCKSyncError.invalidConfiguration(
+          "Synced table '\(table.name)' has an empty primary-key column"
+        )
+      }
+      guard tableNames.insert(table.name).inserted else {
+        throw TursoCKSyncError.invalidConfiguration("Duplicate synced table '\(table.name)'")
+      }
+      guard recordTypes.insert(table.recordType).inserted else {
+        throw TursoCKSyncError.invalidConfiguration(
+          "Duplicate CloudKit record type '\(table.recordType)'"
+        )
+      }
+      var columns = Set<String>()
+      for column in table.columns {
+        guard !column.isEmpty, columns.insert(column).inserted else {
+          throw TursoCKSyncError.invalidConfiguration(
+            "Synced table '\(table.name)' contains an empty or duplicate column"
+          )
+        }
+        guard column != table.primaryKeyColumn else {
+          throw TursoCKSyncError.invalidConfiguration(
+            "Synced columns for '\(table.name)' must exclude primary key '\(column)'"
+          )
+        }
+      }
+      for field in [table.primaryKeyColumn] + table.columns where reservedFields.contains(field) {
+        throw TursoCKSyncError.invalidConfiguration(
+          "Synced field '\(table.name).\(field)' is reserved by CloudKit"
+        )
+      }
+    }
   }
 }

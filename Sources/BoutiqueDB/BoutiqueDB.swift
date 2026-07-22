@@ -36,6 +36,11 @@ public final class BoutiqueDB: Sendable {
   /// Invoked after successful local commits (write / writeConcurrent / commitConcurrent).
   /// Attach a sync drain here (e.g. `BoutiqueDBSyncEngine` auto-drain).
   public var onLocalCommit: (@MainActor () throws -> Void)?
+  private var postCommitObservers: [UUID: @MainActor () throws -> Void] = [:]
+  /// Most recent observer failure. The local transaction has already committed
+  /// when this is set, so the error is reported without pretending to roll it back.
+  public private(set) var lastPostCommitError: BoutiqueError?
+  private var closed = false
 
   /// Opens (or creates) a database file at `url` via the official sdk-kit C ABI.
   ///
@@ -105,6 +110,24 @@ public final class BoutiqueDB: Sendable {
     }
   }
 
+  /// Opens the native store from a shared bootstrap configuration.
+  /// Use ``open(_:)`` when the configuration contains migrations or schema sync.
+  public convenience init(configuration: BoutiqueDBConfiguration) throws {
+    try self.init(
+      url: configuration.url,
+      startListening: configuration.startListening,
+      enableCDC: configuration.enableCDC,
+      concurrentWrites: configuration.concurrentWrites,
+      openOptions: configuration.openOptions,
+      encryption: configuration.encryption,
+      multiProcess: configuration.multiProcess
+    )
+  }
+
+  deinit {
+    database.close()
+  }
+
   /// Escape hatch for advanced callers that must touch the primary handle
   /// (e.g. attaching ``TursoCKSyncEngine``). Prefer ``write`` / ``read``.
   public var unsafeConnection: TursoConnection { connection }
@@ -155,9 +178,45 @@ public final class BoutiqueDB: Sendable {
 
   private func notifyLocalCommit() {
     store.invalidate()
-    if let onLocalCommit {
-      try? onLocalCommit()
+    var observers = Array(postCommitObservers.values)
+    if let onLocalCommit { observers.append(onLocalCommit) }
+    for observer in observers {
+      do {
+        try observer()
+      } catch {
+        lastPostCommitError = .postCommitObserverFailed(String(describing: error))
+      }
     }
+  }
+
+  /// Adds a post-commit observer without replacing existing integrations.
+  /// The returned token can be passed to ``removePostCommitObserver(_:)``.
+  @discardableResult
+  public func addPostCommitObserver(
+    _ observer: @escaping @MainActor () throws -> Void
+  ) -> UUID {
+    let id = UUID()
+    postCommitObservers[id] = observer
+    return id
+  }
+
+  public func removePostCommitObserver(_ id: UUID) {
+    postCommitObservers[id] = nil
+  }
+
+  /// Stops observation and closes every native connection in dependency order.
+  /// Safe to call repeatedly. No database API may be used after closing.
+  public func close() {
+    guard !closed else { return }
+    closed = true
+    store.stopListening()
+    concurrentConnection?.close()
+    concurrentConnection = nil
+    concurrentActor = nil
+    connection.close()
+    database.close()
+    postCommitObservers.removeAll()
+    onLocalCommit = nil
   }
 
   /// Backward-compatible alias.
@@ -294,15 +353,19 @@ public final class BoutiqueDB: Sendable {
       )
     }
     for sql in statements {
-      try await requireCapability(for: sql)
-      try await execute(sql)
+      try requireCapability(for: sql)
+    }
+    try await write { connection in
+      for sql in statements {
+        try connection.execute(sql)
+      }
     }
   }
 
   public func createFTSIndex(_ index: FTSIndexDescriptor) async throws {
     guard capabilities.ftsIndex else {
       throw BoutiqueError.featureUnavailable(
-        "FTS index method unavailable (rebuild libturso_sqlite3 with --experimental-index-method; BD-002)"
+        "FTS index method unavailable; enable the sdk-kit index_method feature"
       )
     }
     try await execute(index.ddl)
@@ -311,7 +374,7 @@ public final class BoutiqueDB: Sendable {
   public func createVectorIndex(_ index: VectorIndexDescriptor) async throws {
     guard capabilities.vectorIndex else {
       throw BoutiqueError.featureUnavailable(
-        "Vector index method unavailable (rebuild libturso_sqlite3 with --experimental-index-method; BD-002)"
+        "Vector index method unavailable; enable the sdk-kit index_method feature"
       )
     }
     try await execute(index.ddl)
@@ -320,13 +383,13 @@ public final class BoutiqueDB: Sendable {
   public func createMaterializedView(_ view: MaterializedViewDescriptor) async throws {
     guard capabilities.materializedViews else {
       throw BoutiqueError.featureUnavailable(
-        "Materialized views unavailable (rebuild with --experimental-views; BD-003)"
+        "Materialized views unavailable; enable the sdk-kit views feature"
       )
     }
     try await execute(view.ddl)
   }
 
-  private func requireCapability(for sql: String) async throws {
+  private func requireCapability(for sql: String) throws {
     let lower = sql.lowercased()
     if lower.contains("using fts"), !capabilities.ftsIndex {
       throw BoutiqueError.featureUnavailable("FTS index method unavailable (BD-002)")

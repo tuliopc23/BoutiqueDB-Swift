@@ -6,12 +6,21 @@ import Foundation
 /// Open options use `turso_database_config_t`:
 /// `experimental_features`, encryption fields, `async_io`.
 public final class TursoDatabase: @unchecked Sendable {
+  private final class WeakConnection: @unchecked Sendable {
+    weak var value: TursoConnection?
+
+    init(_ value: TursoConnection) {
+      self.value = value
+    }
+  }
+
   public let url: URL
   public let openOptions: TursoOpenOptions
   private let lock = NSLock()
-  private var connections: [ObjectIdentifier: TursoConnection] = [:]
+  private var connections: [ObjectIdentifier: WeakConnection] = [:]
   private var databaseHandle: OpaquePointer?
   private var opened = false
+  private var closed = false
 
   public init(url: URL, openOptions: TursoOpenOptions = TursoOpenOptions()) {
     self.url = url
@@ -19,8 +28,30 @@ public final class TursoDatabase: @unchecked Sendable {
   }
 
   deinit {
-    if let databaseHandle {
-      turso_database_deinit(databaseHandle)
+    close()
+  }
+
+  /// Closes every child connection before releasing the native database handle.
+  /// Safe to call repeatedly.
+  public func close() {
+    lock.lock()
+    guard !closed else {
+      lock.unlock()
+      return
+    }
+    closed = true
+    let openConnections = connections.values.compactMap(\.value)
+    connections.removeAll()
+    let handle = databaseHandle
+    databaseHandle = nil
+    opened = false
+    lock.unlock()
+
+    for connection in openConnections {
+      connection.close()
+    }
+    if let handle {
+      turso_database_deinit(handle)
     }
   }
 
@@ -55,7 +86,7 @@ public final class TursoDatabase: @unchecked Sendable {
     }
 
     lock.lock()
-    connections[ObjectIdentifier(connection)] = connection
+    connections[ObjectIdentifier(connection)] = WeakConnection(connection)
     lock.unlock()
     return connection
   }
@@ -63,6 +94,9 @@ public final class TursoDatabase: @unchecked Sendable {
   private func ensureOpened() throws {
     lock.lock()
     defer { lock.unlock() }
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Database is closed")
+    }
     if opened { return }
 
     let path = url.path

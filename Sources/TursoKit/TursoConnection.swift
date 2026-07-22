@@ -14,31 +14,34 @@ public enum CDCCaptureMode: String, Sendable {
 /// - Important: Do not enable `journal_mode=mvcc` on a connection that also
 ///   enables CDC (`PRAGMA capture_data_changes_conn`). They are mutually exclusive.
 public final class TursoConnection: @unchecked Sendable {
-  public private(set) weak var database: TursoDatabase?
+  /// Retains the native database owner for as long as this connection is open.
+  /// The database keeps only weak registrations of its child connections, so
+  /// this does not form a retain cycle.
+  public private(set) var database: TursoDatabase?
   let handle: OpaquePointer
   private let asyncIO: Bool
   private let lock = NSRecursiveLock()
   private var closed = false
   private var lastChanges: Int = 0
 
-  private var _isSynchronizing: Bool = false
+  private var synchronizationDepth = 0
 
   public var isApplyingRemoteChanges: Bool {
-    withLockUnchecked { _isSynchronizing }
+    withLockUnchecked { synchronizationDepth > 0 }
   }
 
   public var isSynchronizing: Bool {
     get { isApplyingRemoteChanges }
-    set { withLockUnchecked { _isSynchronizing = newValue } }
+    set { withLockUnchecked { synchronizationDepth = newValue ? max(synchronizationDepth, 1) : 0 } }
   }
 
   public func withSynchronizingFlag<T>(_ body: () throws -> T) rethrows -> T {
     lock.lock()
-    _isSynchronizing = true
+    synchronizationDepth += 1
     lock.unlock()
     defer {
       lock.lock()
-      _isSynchronizing = false
+      synchronizationDepth = max(0, synchronizationDepth - 1)
       lock.unlock()
     }
     return try body()
@@ -68,10 +71,12 @@ public final class TursoConnection: @unchecked Sendable {
     defer { lock.unlock() }
     guard !closed else { return }
     closed = true
-    database?.unregister(self)
+    let owningDatabase = database
+    owningDatabase?.unregister(self)
     var err: UnsafePointer<CChar>?
     _ = turso_connection_close(handle, &err)
     turso_connection_deinit(handle)
+    database = nil
   }
 
   // MARK: - Execute / Query
@@ -96,7 +101,8 @@ public final class TursoConnection: @unchecked Sendable {
     }
   }
 
-  public func queryOne(_ sql: String, _ bindings: [TursoValue] = []) throws -> [String: TursoValue]? {
+  public func queryOne(_ sql: String, _ bindings: [TursoValue] = []) throws -> [String: TursoValue]?
+  {
     try query(sql, bindings).first
   }
 
@@ -131,7 +137,11 @@ public final class TursoConnection: @unchecked Sendable {
         try executeUnlocked("COMMIT")
         return value
       } catch {
-        try? executeUnlocked("ROLLBACK")
+        do {
+          try executeUnlocked("ROLLBACK")
+        } catch let rollbackError {
+          throw transactionFailure(operation: error, rollback: rollbackError)
+        }
         throw error
       }
     }
@@ -145,7 +155,11 @@ public final class TursoConnection: @unchecked Sendable {
         try executeUnlocked("COMMIT")
         return value
       } catch {
-        try? executeUnlocked("ROLLBACK")
+        do {
+          try executeUnlocked("ROLLBACK")
+        } catch let rollbackError {
+          throw transactionFailure(operation: error, rollback: rollbackError)
+        }
         throw error
       }
     }
@@ -160,7 +174,11 @@ public final class TursoConnection: @unchecked Sendable {
         try executeUnlocked("COMMIT")
         return value
       } catch {
-        try? executeUnlocked("ROLLBACK")
+        do {
+          try executeUnlocked("ROLLBACK")
+        } catch let rollbackError {
+          throw transactionFailure(operation: error, rollback: rollbackError)
+        }
         throw error
       }
     }
@@ -187,7 +205,9 @@ public final class TursoConnection: @unchecked Sendable {
     return rows.compactMap { CDCChange(row: $0) }
   }
 
-  public func cdcDecodedJSON(after changeID: Int64, limit: Int = 500) throws -> [[String: TursoValue]] {
+  public func cdcDecodedJSON(after changeID: Int64, limit: Int = 500) throws -> [[String:
+    TursoValue]]
+  {
     try query(
       """
       SELECT
@@ -231,7 +251,8 @@ public final class TursoConnection: @unchecked Sendable {
     lastChanges = statement.changeCount
   }
 
-  func queryUnlocked(_ sql: String, _ bindings: [TursoValue] = []) throws -> [[String: TursoValue]] {
+  func queryUnlocked(_ sql: String, _ bindings: [TursoValue] = []) throws -> [[String: TursoValue]]
+  {
     let statement = try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
     defer { statement.finalize() }
     try statement.bind(bindings)
@@ -270,7 +291,11 @@ public final class TursoConnection: @unchecked Sendable {
         try await executeUnlockedAsync("COMMIT")
         return value
       } catch {
-        try? await executeUnlockedAsync("ROLLBACK")
+        do {
+          try await executeUnlockedAsync("ROLLBACK")
+        } catch let rollbackError {
+          throw transactionFailure(operation: error, rollback: rollbackError)
+        }
         throw error
       }
     }
@@ -286,7 +311,11 @@ public final class TursoConnection: @unchecked Sendable {
         try await executeUnlockedAsync("COMMIT")
         return value
       } catch {
-        try? await executeUnlockedAsync("ROLLBACK")
+        do {
+          try await executeUnlockedAsync("ROLLBACK")
+        } catch let rollbackError {
+          throw transactionFailure(operation: error, rollback: rollbackError)
+        }
         throw error
       }
     }
@@ -302,7 +331,11 @@ public final class TursoConnection: @unchecked Sendable {
         try await executeUnlockedAsync("COMMIT")
         return value
       } catch {
-        try? await executeUnlockedAsync("ROLLBACK")
+        do {
+          try await executeUnlockedAsync("ROLLBACK")
+        } catch let rollbackError {
+          throw transactionFailure(operation: error, rollback: rollbackError)
+        }
         throw error
       }
     }
@@ -337,6 +370,14 @@ public final class TursoConnection: @unchecked Sendable {
       rows.append(statement.namedRow())
     }
     return rows
+  }
+
+  private func transactionFailure(operation: Error, rollback: Error) -> TursoError {
+    let code = (operation as? TursoError)?.code ?? Int32(TURSO_ERROR.rawValue)
+    return TursoError(
+      code: code,
+      message: "transaction failed: \(operation); rollback also failed: \(rollback)"
+    )
   }
 }
 

@@ -40,6 +40,7 @@ struct SchemaDDLTests {
       .appendingPathComponent("schema-\(UUID().uuidString).db")
     let db = try BoutiqueDB(url: url, startListening: false)
     defer { try? FileManager.default.removeItem(at: url) }
+    defer { db.close() }
 
     let table = BoutiqueTableDescriptor(
       name: "items",
@@ -59,6 +60,7 @@ struct SchemaDDLTests {
       .appendingPathComponent("cap-\(UUID().uuidString).db")
     let db = try BoutiqueDB(url: url, startListening: false)
     defer { try? FileManager.default.removeItem(at: url) }
+    defer { db.close() }
 
     // CDC path always available through our open path.
     #expect(db.capabilities.cdc)
@@ -69,6 +71,7 @@ struct SchemaDDLTests {
       .appendingPathComponent("schema2-\(UUID().uuidString).db")
     let db = try BoutiqueDB(url: url, startListening: false)
     defer { try? FileManager.default.removeItem(at: url) }
+    defer { db.close() }
 
     try await db.create(ManualNoteSchema.self)
     let rows = try await db.read { conn in

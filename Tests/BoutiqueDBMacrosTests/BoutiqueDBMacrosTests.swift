@@ -40,9 +40,17 @@ struct BoutiqueDBMacrosTests {
             "CREATE TABLE IF NOT EXISTS \\"notes\\" (\\n  \\"id\\" TEXT PRIMARY KEY NOT NULL,\\n  \\"title\\" TEXT NOT NULL,\\n  \\"body\\" TEXT NOT NULL\\n) STRICT"
           ]
         }
+
+        public static var boutiqueColumns: [BoutiqueColumnSpec] {
+          [
+            BoutiqueColumnSpec(name: "id", sqlType: "TEXT", defaultSQL: nil, isNullable: false, isPrimaryKey: true, generatedExpression: nil),
+              BoutiqueColumnSpec(name: "title", sqlType: "TEXT", defaultSQL: nil, isNullable: false, isPrimaryKey: false, generatedExpression: nil),
+              BoutiqueColumnSpec(name: "body", sqlType: "TEXT", defaultSQL: nil, isNullable: false, isPrimaryKey: false, generatedExpression: nil)
+          ]
+        }
       }
 
-      extension Note: BoutiqueSchema {
+      extension Note: BoutiqueSchemaColumns {
       }
       """
     }
@@ -129,6 +137,28 @@ struct BoutiqueDBMacrosTests {
       ┬────────────────────────────────────
       ╰─ 🛑 Unsupported FTS tokenizer '.bogus'. Allowed: .default, .raw, .simple, .whitespace, .ngram
       struct Bad {
+      }
+      """
+    }
+  }
+
+  @Test func boutiqueTableRejectsUnsupportedStoredTypes() {
+    assertMacro {
+      """
+      @BoutiqueTable
+      struct InvalidModel {
+        let id: String
+        var payload: CustomPayload
+      }
+      """
+    } diagnostics: {
+      """
+      @BoutiqueTable
+      ┬─────────────
+      ╰─ 🛑 Unsupported persisted property type 'CustomPayload'; add an explicit supported storage representation
+      struct InvalidModel {
+        let id: String
+        var payload: CustomPayload
       }
       """
     }

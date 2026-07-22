@@ -23,23 +23,7 @@ extension BoutiqueDB {
     for schema in schemas {
       let statements = schema.boutiqueCreateStatements
       if !statements.isEmpty {
-        // Prefer full create path (capability-gated) when statements present.
-        do {
-          try await create(schema)
-        } catch let error as BoutiqueError {
-          // Capability missing for FTS/vector is non-fatal during additive sync:
-          // still try plain CREATE TABLE statements if any.
-          if case .featureUnavailable = error {
-            for sql in statements where !sql.uppercased().contains("USING FTS")
-              && !sql.uppercased().contains("USING VECTOR")
-              && !sql.uppercased().contains("MATERIALIZED VIEW")
-            {
-              try await execute(sql)
-            }
-          } else {
-            throw error
-          }
-        }
+        try await create(schema)
       }
       // Additive columns (R0.6 / A-009).
       if let columnsType = schema as? any BoutiqueSchemaColumns.Type {

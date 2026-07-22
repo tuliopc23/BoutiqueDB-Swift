@@ -53,7 +53,17 @@ public final class TursoStatement: @unchecked Sendable {
     try TursoError.check(st, error: err, allowed: [TURSO_OK, TURSO_DONE])
   }
 
-  public func clearBindings() throws {}
+  /// Clearing bindings is not exposed by the current sdk-kit C ABI.
+  ///
+  /// This method previously returned success without changing the statement,
+  /// which could cause a reused statement to execute with stale values. Callers
+  /// must currently finalize and prepare a new statement instead.
+  public func clearBindings() throws {
+    throw TursoError(
+      code: Int32(TURSO_MISUSE.rawValue),
+      message: "clearBindings is unavailable in the current sdk-kit ABI; prepare a new statement"
+    )
+  }
 
   public func bind(_ value: TursoValue, at index: Int) throws {
     let pos = index

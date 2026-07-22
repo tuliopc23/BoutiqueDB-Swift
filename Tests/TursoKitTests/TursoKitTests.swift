@@ -12,6 +12,7 @@ struct TursoKitTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let db = TursoDatabase(url: url)
+    defer { db.close() }
     let conn = try db.connect(enableCDC: true)
 
     try conn.execute(
@@ -49,6 +50,7 @@ struct TursoKitTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let conn = try TursoDatabase(url: url).connect()
+    defer { conn.close() }
     try conn.execute(
       """
       CREATE TABLE "notes" (
@@ -78,6 +80,38 @@ struct TursoKitTests {
 
     try Note.where { $0.id.eq("n2") }.delete().execute(conn)
     #expect(try Note.fetchCount(conn) == 1)
+  }
+
+  @Test func clearBindingsNeverSilentlySucceeds() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("turso-clear-bindings-\(UUID().uuidString).db")
+    let db = TursoDatabase(url: url)
+    let conn = try db.connect()
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: url)
+    }
+    let statement = try conn.prepare("SELECT ?")
+    try statement.bind(.integer(42), at: 1)
+    #expect(throws: TursoError.self) {
+      try statement.clearBindings()
+    }
+  }
+
+  @Test func databaseCloseIsIdempotentAndClosesChildren() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("turso-close-\(UUID().uuidString).db")
+    let db = TursoDatabase(url: url)
+    let conn = try db.connect()
+    db.close()
+    db.close()
+    #expect(throws: TursoError.self) {
+      try conn.execute("SELECT 1")
+    }
+    #expect(throws: TursoError.self) {
+      _ = try db.connect()
+    }
+    try? FileManager.default.removeItem(at: url)
   }
 }
 

@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    name: Build xcframework + GitHub Release
+    name: Multi-arch xcframework + GitHub Release
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -20,26 +20,25 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
 
       - name: Checkout engine
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/BoutiqueDB
           path: engine
-        continue-on-error: true
 
-      - name: Build multi-arch TursoSDK (best effort)
+      - name: Build full multi-arch TursoSDK
         env:
           TURSO_SRC: ${{ github.workspace }}/engine
         run: |
           chmod +x Scripts/build-turso-sdk-xcframework.sh
-          if [ -d engine/sdk-kit ]; then
-            # Expand SLICES as CI Rust targets become available
-            SLICES=macos-arm64 TURSO_SRC="$TURSO_SRC" ./Scripts/build-turso-sdk-xcframework.sh
-          else
-            echo "Engine checkout missing; skip binary build"
-            exit 1
-          fi
+          test -d engine/sdk-kit
+          SLICES=all TURSO_SRC="$TURSO_SRC" ./Scripts/build-turso-sdk-xcframework.sh
+          find Vendor/TursoSDK.xcframework -name '*.a' -exec lipo -info {} \;
+          find Vendor/TursoSDK.xcframework -type d -name 'ios-arm64' | grep -q .
+          find Vendor/TursoSDK.xcframework -type d -name 'macos-*' | head -1 | grep -q .
 
       - name: Checksum
         id: sum
@@ -47,6 +46,11 @@ jobs:
           SUM=$(swift package compute-checksum Vendor/TursoSDK.xcframework.zip)
           echo "checksum=$SUM" >> "$GITHUB_OUTPUT"
           echo "Checksum: $SUM"
+          ls -lh Vendor/TursoSDK.xcframework.zip
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          grep -Fq "let tursoSDKVersion = \"$TAG_VERSION\"" Package.swift
+          grep -Fq "let tursoSDKChecksum = \"$SUM\"" Package.swift
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -56,12 +60,15 @@ jobs:
           body: |
             BoutiqueDB `${{ github.ref_name }}`
 
-            - Attach `TursoSDK.xcframework.zip` for SPM binary consumers.
+            Multi-arch engine binary (macOS + iOS device + iOS Simulator):
+            - Asset: `TursoSDK.xcframework.zip`
             - Checksum: `${{ steps.sum.outputs.checksum }}`
 
             Install:
             ```swift
-            .package(url: "https://github.com/${{ github.repository }}.git", from: "${{ github.ref_name }}")
+            .package(url: "https://github.com/${{ github.repository }}.git", from: "${{ steps.sum.outputs.version }}")
             ```
+
+            Platforms: iOS 17+, macOS 14+. No `unsafeFlags`.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -11,7 +11,7 @@ enum RecordMapper {
     systemFields: Data?
   ) throws -> CKRecord {
     let recordID = CKRecord.ID(
-      recordName: table.recordName(forRowPK: rowPK),
+      recordName: try table.recordName(forRowPK: rowPK),
       zoneID: zoneID
     )
     let record: CKRecord
@@ -106,4 +106,3 @@ enum RecordMapper {
     return row
   }
 }
-

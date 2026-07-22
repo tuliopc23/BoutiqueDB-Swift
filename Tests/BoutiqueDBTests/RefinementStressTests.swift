@@ -35,8 +35,8 @@ struct RefinementStressTests {
       url: url,
       startListening: true,
       concurrentWrites: true,
-      migrations: plan
-    )
+      migrations: plan)
+    defer { db.close() }
 
     let a = LiveQuery(db) { StressNote.all.asSelect() }
     let b = LiveQuery(db) { StressNote.all.asSelect() }
@@ -82,6 +82,7 @@ struct RefinementStressTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let db = try BoutiqueDB(url: url, startListening: false)
+    defer { db.close() }
     try await db.execute(
       """
       CREATE TABLE stressNotes (

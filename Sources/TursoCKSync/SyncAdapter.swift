@@ -71,7 +71,7 @@ public final class CloudKitSyncAdapter: SyncAdapter, @unchecked Sendable {
     publish(.syncing)
     do {
       try engine.start(automaticallySync: engine.configuration.enablesCloudKit)
-      try engine.detectAccountIdentityChangeIfNeeded()
+      try await engine.detectAccountIdentityChangeIfNeeded()
       publish(.idle)
     } catch {
       publish(.failed(error.localizedDescription))

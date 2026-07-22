@@ -5,9 +5,8 @@ extension DependencyValues {
   /// Application default ``BoutiqueDB`` (set in `prepareDependencies` at launch).
   ///
   /// ```swift
-  /// prepareDependencies {
-  ///   $0.boutiqueDB = try await BoutiqueDB.open(url: url, migrations: plan)
-  /// }
+  /// let database = try await BoutiqueDB.open(url: url, migrations: plan)
+  /// prepareDependencies { $0.boutiqueDB = database }
   /// ```
   public var boutiqueDB: BoutiqueDB {
     get { self[BoutiqueDBKey.self] }

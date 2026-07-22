@@ -7,8 +7,8 @@ on:
     branches: [main, master]
 
 jobs:
-  test:
-    name: swift test (macOS)
+  test-macos:
+    name: macOS build + test
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +21,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -31,48 +33,80 @@ jobs:
           key: cargo-reg-${{ runner.os }}-${{ hashFiles('Scripts/**') }}
           restore-keys: cargo-reg-${{ runner.os }}-
 
-      - name: Checkout Turso engine (for sdk-kit build)
+      - name: Checkout Turso engine
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/BoutiqueDB
           path: engine
-          # Fallback: if monorepo not public under that name, set secrets or submodule.
-        continue-on-error: true
-
-      - name: Resolve TURSO_SRC
-        id: eng
-        run: |
-          if [ -d engine/sdk-kit ]; then
-            echo "TURSO_SRC=${{ github.workspace }}/engine" >> "$GITHUB_ENV"
-          elif [ -d "$HOME/Developer/BoutiqueDB/sdk-kit" ]; then
-            echo "TURSO_SRC=$HOME/Developer/BoutiqueDB" >> "$GITHUB_ENV"
-          else
-            echo "No engine tree; expecting prebuilt Vendor/TursoSDK.xcframework in repo or artifact"
-          fi
 
       - name: Cache engine target
-        if: env.TURSO_SRC != ''
         uses: actions/cache@v4
         with:
-          path: ${{ env.TURSO_SRC }}/target
-          key: turso-sdk-${{ runner.os }}-${{ hashFiles('Scripts/build-turso-sdk*.sh') }}
-          restore-keys: turso-sdk-${{ runner.os }}-
+          path: engine/target
+          key: turso-sdk-multi-${{ runner.os }}-${{ hashFiles('Scripts/build-turso-sdk*.sh') }}
+          restore-keys: turso-sdk-multi-${{ runner.os }}-
 
-      - name: Build TursoSDK.xcframework (macos-arm64)
-        if: env.TURSO_SRC != ''
+      - name: Build multi-arch TursoSDK.xcframework
         run: |
           chmod +x Scripts/build-turso-sdk-xcframework.sh
-          SLICES=macos-arm64 TURSO_SRC="$TURSO_SRC" ./Scripts/build-turso-sdk-xcframework.sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          SLICES=all TURSO_SRC="${{ github.workspace }}/engine" ./Scripts/build-turso-sdk-xcframework.sh
+          find Vendor/TursoSDK.xcframework -name '*.a' -exec lipo -info {} \;
+          find Vendor/TursoSDK.xcframework -type d -name 'ios-arm64' | grep -q .
+          find Vendor/TursoSDK.xcframework -type d -name 'macos-*' | grep -q .
+          find Vendor/TursoSDK.xcframework -type d -name 'ios-*-simulator' | grep -q .
 
-      - name: Ensure binary present
-        run: |
-          test -d Vendor/TursoSDK.xcframework || {
-            echo "Missing Vendor/TursoSDK.xcframework — commit path binary for bootstrap or fix engine checkout"
-            exit 1
-          }
-
-      - name: Build
+      - name: Build (macOS)
         run: swift build
 
-      - name: Test
+      - name: Test (macOS)
         run: swift test
+
+  build-ios:
+    name: iOS Simulator build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - name: Checkout Turso engine
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/BoutiqueDB
+          path: engine
+
+      - name: Cache engine target
+        uses: actions/cache@v4
+        with:
+          path: engine/target
+          key: turso-sdk-multi-${{ runner.os }}-${{ hashFiles('Scripts/build-turso-sdk*.sh') }}
+          restore-keys: turso-sdk-multi-${{ runner.os }}-
+
+      - name: Build multi-arch TursoSDK.xcframework
+        run: |
+          chmod +x Scripts/build-turso-sdk-xcframework.sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          SLICES=all TURSO_SRC="${{ github.workspace }}/engine" ./Scripts/build-turso-sdk-xcframework.sh
+
+      - name: Resolve package
+        run: swift package resolve
+
+      - name: Build for iOS Simulator
+        run: |
+          set -euo pipefail
+          # Apple Silicon runners: arm64 simulator. Proves native iOS slice links.
+          xcodebuild -scheme BoutiqueDB-Package \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath .build/DerivedData-ios \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
+            build

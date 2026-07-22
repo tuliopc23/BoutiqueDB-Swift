@@ -12,7 +12,7 @@ public enum BoutiqueError: Error, Sendable, Equatable {
   /// Multi-process WAL was requested but is not available on this build.
   case multiProcessWALUnavailable
 
-  /// A Turso feature is not available in the current `libturso_sqlite3` build.
+  /// A Turso feature is not available in the current sdk-kit build/configuration.
   case featureUnavailable(String)
 
   /// Underlying engine / SQL failure.
@@ -28,11 +28,17 @@ public enum BoutiqueError: Error, Sendable, Equatable {
   /// Migration failed.
   case migrationFailed(id: String, message: String)
 
+  /// Migration identifiers are empty, duplicated, reordered, or omit applied history.
+  case invalidMigrationPlan(String)
+
   /// A concurrent or exclusive transaction is already open on this actor.
   case transactionInProgress
 
   /// Nested begin / invalid transaction state.
   case invalidTransactionState(String)
+
+  /// A post-commit observer failed after the local transaction was durable.
+  case postCommitObserverFailed(String)
 }
 
 extension BoutiqueError {

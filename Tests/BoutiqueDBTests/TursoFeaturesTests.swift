@@ -70,8 +70,8 @@ struct TursoFeaturesTests {
     let db = try BoutiqueDB(
       url: url,
       startListening: false,
-      encryption: .aegis256(key: Data(repeating: 0xAB, count: 32))
-    )
+      encryption: .aegis256(key: Data(repeating: 0xAB, count: 32)))
+    defer { db.close() }
     try await db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
   }
 
@@ -81,6 +81,7 @@ struct TursoFeaturesTests {
       .appendingPathComponent("mp-\(UUID().uuidString).db")
     defer { try? FileManager.default.removeItem(at: url) }
     let db = try BoutiqueDB(url: url, startListening: false, multiProcess: true)
+    defer { db.close() }
     try await db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
   }
 

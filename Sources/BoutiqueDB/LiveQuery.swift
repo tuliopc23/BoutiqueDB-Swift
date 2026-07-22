@@ -19,6 +19,9 @@ where Element == Element.QueryOutput {
   private let db: BoutiqueDB
   private var query: @Sendable () -> SelectOf<Element>
   @ObservationIgnored nonisolated(unsafe) private var observationTask: Task<Void, Never>?
+  @ObservationIgnored nonisolated(unsafe) private var refreshTask: Task<Void, Never>?
+  @ObservationIgnored private var queryRevision: UInt64 = 0
+  @ObservationIgnored private var loadRevision: UInt64 = 0
 
   public init(
     wrappedValue: [Element] = [],
@@ -33,28 +36,52 @@ where Element == Element.QueryOutput {
 
   deinit {
     observationTask?.cancel()
+    refreshTask?.cancel()
   }
 
   /// Replace the query factory (e.g. new FTS search text) and reload.
   public func setQuery(_ query: @escaping @Sendable () -> SelectOf<Element>) {
     self.query = query
+    queryRevision &+= 1
     forceRefresh()
   }
 
   public func forceRefresh() {
-    Task { await load() }
+    refreshTask?.cancel()
+    loadRevision &+= 1
+    let queryRevision = queryRevision
+    let loadRevision = loadRevision
+    refreshTask = Task { [weak self] in
+      await self?.load(queryRevision: queryRevision, loadRevision: loadRevision)
+    }
   }
 
   public func load() async {
+    refreshTask?.cancel()
+    loadRevision &+= 1
+    await load(queryRevision: queryRevision, loadRevision: loadRevision)
+  }
+
+  private func load(queryRevision: UInt64, loadRevision: UInt64) async {
     isLoading = true
-    defer { isLoading = false }
     let q = query
     do {
       let rows = try await db.read { try q().fetchAll($0.connection) }
+      guard
+        !Task.isCancelled, queryRevision == self.queryRevision,
+        loadRevision == self.loadRevision
+      else { return }
       wrappedValue = rows
       loadError = nil
     } catch {
+      guard
+        !Task.isCancelled, queryRevision == self.queryRevision,
+        loadRevision == self.loadRevision
+      else { return }
       loadError = error
+    }
+    if queryRevision == self.queryRevision, loadRevision == self.loadRevision {
+      isLoading = false
     }
   }
 
@@ -63,8 +90,8 @@ where Element == Element.QueryOutput {
   }
 
   private func startObserving() {
+    forceRefresh()
     observationTask = Task { [weak self] in
-      await self?.load()
       guard let self else { return }
       for await _ in self.db.store.subscribe() {
         await self.load()

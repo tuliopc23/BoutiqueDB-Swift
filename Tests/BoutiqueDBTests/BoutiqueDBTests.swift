@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import StructuredQueries
 import Testing
+import TursoKit
 import TursoObservation
 
 @Table
@@ -47,7 +48,10 @@ struct BoutiqueDBTests {
 
   @Test func asyncReadWriteRoundTrip() async throws {
     let db = try await makeDBWithSchema()
-    defer { try? FileManager.default.removeItem(at: db.url) }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: db.url)
+    }
 
     try await db.write { conn in
       try Note.insert { Note(id: "n1", title: "Hello", body: "World") }.execute(conn.connection)
@@ -62,7 +66,10 @@ struct BoutiqueDBTests {
 
   @Test func writeEmitsChangeEvent() async throws {
     let db = try await makeDBWithSchema()
-    defer { try? FileManager.default.removeItem(at: db.url) }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: db.url)
+    }
 
     let stream = db.store.subscribe()
     var iterator = stream.makeAsyncIterator()
@@ -81,7 +88,10 @@ struct BoutiqueDBTests {
 
   @Test func liveQueryAutoRefreshes() async throws {
     let db = try await makeDBWithSchema()
-    defer { try? FileManager.default.removeItem(at: db.url) }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: db.url)
+    }
 
     let query = LiveQuery(db) { Note.all.asSelect() }
     _ = await waitFor(timeout: .milliseconds(500)) {
@@ -101,7 +111,10 @@ struct BoutiqueDBTests {
 
   @Test func liveQueryOneAutoRefreshes() async throws {
     let db = try await makeDBWithSchema()
-    defer { try? FileManager.default.removeItem(at: db.url) }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: db.url)
+    }
 
     try await db.write { conn in
       try Note.insert { Note(id: "n3", title: "One", body: "1") }.execute(conn.connection)
@@ -126,7 +139,10 @@ struct BoutiqueDBTests {
 
   @Test func twoLiveQueriesBothRefresh() async throws {
     let db = try await makeDBWithSchema()
-    defer { try? FileManager.default.removeItem(at: db.url) }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: db.url)
+    }
 
     let a = LiveQuery(db) { Note.all.asSelect() }
     let b = LiveQuery(db) { Note.all.asSelect() }
@@ -143,7 +159,10 @@ struct BoutiqueDBTests {
 
   @Test func forceRefreshWorks() async throws {
     let db = try await makeDBWithSchema()
-    defer { try? FileManager.default.removeItem(at: db.url) }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: db.url)
+    }
 
     let query = LiveQuery(db) { Note.all.asSelect() }
     _ = await waitFor { !query.isLoading }
@@ -159,7 +178,10 @@ struct BoutiqueDBTests {
 
   @Test func concurrentWritesSerialize() async throws {
     let db = try await makeDBWithSchema()
-    defer { try? FileManager.default.removeItem(at: db.url) }
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: db.url)
+    }
 
     async let w1: Void = db.write { conn in
       try Note.insert { Note(id: "c1", title: "1", body: "a") }.execute(conn.connection)
@@ -193,9 +215,29 @@ struct BoutiqueDBTests {
       .closed,
       .transactionInProgress,
       .invalidTransactionState("x"),
+      .postCommitObserverFailed("x"),
+      .invalidMigrationPlan("x"),
       .migrationFailed(id: "v1", message: "x"),
       .schemaErasedForDebug("x"),
     ]
-    #expect(errors.count == 10)
+    #expect(errors.count == 12)
+  }
+
+  @Test func postCommitObserversDoNotClobberAndFailuresAreVisible() async throws {
+    let db = try await makeDBWithSchema()
+    defer {
+      db.close()
+      try? FileManager.default.removeItem(at: db.url)
+    }
+    var calls = 0
+    _ = db.addPostCommitObserver { calls += 1 }
+    _ = db.addPostCommitObserver {
+      calls += 1
+      throw TursoError(code: 1, message: "enqueue failed")
+    }
+
+    try await db.execute("INSERT INTO notes (id, title, body) VALUES ('hooks', 'H', 'B')")
+    #expect(calls == 2)
+    #expect(db.lastPostCommitError == .postCommitObserverFailed("TursoError(1): enqueue failed"))
   }
 }

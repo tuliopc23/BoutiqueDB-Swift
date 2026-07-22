@@ -5,14 +5,23 @@ All notable changes to the **BoutiqueDB** Swift package are documented here.
 ## Unreleased
 
 ### Planned
-- Multi-arch `TursoSDK.xcframework` (iOS device + simulator) for SPI iOS builds
 - DocC polish and broader public docs
+
+## 0.2.1 — 2026-07-22
+
+### Packaging (SPI iOS + macOS)
+- **Multi-arch `TursoSDK.xcframework`:** macOS (arm64+x86_64), iOS device (arm64), iOS Simulator (arm64+x86_64)
+- Default `./Scripts/build-turso-sdk-xcframework.sh` always builds full SPI set (`SLICES=all`)
+- `.spi.yml` enables **macos-xcodebuild** and **ios**
+- CI: multi-arch engine build + iOS Simulator job
+- Permanent agent rule: `AGENTS.md` — never ship macOS-only for public/SPI
+- Engine: pure-rust crypto path for `target_os = "ios"` (BoutiqueDB core)
 
 ## 0.2.0 — 2026-07-22
 
 ### Packaging (SPI-ready)
 - **No `unsafeFlags`:** `Package.swift` uses `binaryTarget` `TursoSDK` (release zip URL + optional local path)
-- GitHub Release asset: `TursoSDK.xcframework.zip` (sdk-kit)
+- GitHub Release asset: `TursoSDK.xcframework.zip` (sdk-kit, macOS arm64 only)
 - `Scripts/build-turso-sdk-xcframework.sh` for maintainer/CI builds
 - `LICENSE`, `NOTICE`, `.spi.yml`, `docs/Publishing.md`
 - Public repo: [tuliopc23/BoutiqueDB-Swift](https://github.com/tuliopc23/BoutiqueDB-Swift)

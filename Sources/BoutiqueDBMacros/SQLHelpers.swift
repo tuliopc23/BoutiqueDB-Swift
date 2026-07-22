@@ -16,21 +16,25 @@ enum BoutiqueSQL {
     return String(lowered) + "s"
   }
 
-  static func sqlType(for typeSyntax: TypeSyntax) -> String {
+  static func sqlType(for typeSyntax: TypeSyntax) throws -> String {
     let text = typeSyntax.trimmedDescription
       .replacingOccurrences(of: "?", with: "")
       .replacingOccurrences(of: " ", with: "")
     switch text {
     case "Int", "Int64", "Int32", "UInt", "UInt64", "UInt32", "Bool":
       return "INTEGER"
-    case "Double", "Float", "CGFloat":
+    case "Double", "Float", "CGFloat", "Date":
       return "REAL"
     case "Data":
       return "BLOB"
     case "Vector32", "Vector32Sparse":
       return "BLOB"
-    default:
+    case "String", "Substring", "Character", "UUID", "URL", "Decimal":
       return "TEXT"
+    default:
+      throw BoutiqueMacroError.message(
+        "Unsupported persisted property type '\(typeSyntax.trimmedDescription)'; add an explicit supported storage representation"
+      )
     }
   }
 

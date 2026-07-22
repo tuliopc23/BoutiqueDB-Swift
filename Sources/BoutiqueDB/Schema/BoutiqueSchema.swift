@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Macros (`@BoutiqueTable`, `@FTSIndex`, `@VectorIndex`, `@MaterializedView`)
 /// generate conformances so Apple apps never hand-write Turso-specific SQL.
-public protocol BoutiqueSchema {
+public protocol BoutiqueSchema: Sendable {
   /// Preferred table / view name.
   static var boutiqueTableName: String { get }
 
@@ -23,11 +23,24 @@ public struct BoutiqueColumnSpec: Sendable, Equatable {
   public var name: String
   public var sqlType: String
   public var defaultSQL: String?
+  public var isNullable: Bool
+  public var isPrimaryKey: Bool
+  public var generatedExpression: String?
 
-  public init(name: String, sqlType: String, defaultSQL: String? = nil) {
+  public init(
+    name: String,
+    sqlType: String,
+    defaultSQL: String? = nil,
+    isNullable: Bool = true,
+    isPrimaryKey: Bool = false,
+    generatedExpression: String? = nil
+  ) {
     self.name = name
     self.sqlType = sqlType
     self.defaultSQL = defaultSQL
+    self.isNullable = isNullable
+    self.isPrimaryKey = isPrimaryKey
+    self.generatedExpression = generatedExpression
   }
 }
 

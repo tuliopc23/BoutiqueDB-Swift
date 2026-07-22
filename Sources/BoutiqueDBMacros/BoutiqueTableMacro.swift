@@ -65,6 +65,12 @@ public struct BoutiqueTableMacro: MemberMacro {
     let statementsLiteral = ([ddl] + extraStatements)
       .map(\.swiftStringLiteral)
       .joined(separator: ",\n      ")
+    let columnsLiteral = columns.map { column in
+      let defaultSQL = "nil"
+      let generated = column.generatedExpression.map { $0.swiftStringLiteral } ?? "nil"
+      return
+        "BoutiqueColumnSpec(name: \(column.name.swiftStringLiteral), sqlType: \(column.sqlType.swiftStringLiteral), defaultSQL: \(defaultSQL), isNullable: \(column.isOptional), isPrimaryKey: \(column.isPrimaryKey), generatedExpression: \(generated))"
+    }.joined(separator: ",\n      ")
 
     let decl: DeclSyntax = """
       public static var boutiqueTableName: String { \(literal: tableName) }
@@ -72,6 +78,12 @@ public struct BoutiqueTableMacro: MemberMacro {
       public static var boutiqueCreateStatements: [String] {
         [
           \(raw: statementsLiteral)
+        ]
+      }
+
+      public static var boutiqueColumns: [BoutiqueColumnSpec] {
+        [
+          \(raw: columnsLiteral)
         ]
       }
       """
@@ -107,7 +119,7 @@ public struct BoutiqueTableMacro: MemberMacro {
       columns.append(
         ParsedColumn(
           name: name,
-          sqlType: BoutiqueSQL.sqlType(for: typeAnnotation),
+          sqlType: try BoutiqueSQL.sqlType(for: typeAnnotation),
           isOptional: BoutiqueSQL.isOptional(typeAnnotation),
           isPrimaryKey: isPK,
           generatedExpression: generated
@@ -127,7 +139,7 @@ extension BoutiqueTableMacro: ExtensionMacro {
     in context: some MacroExpansionContext
   ) throws -> [ExtensionDeclSyntax] {
     let ext: DeclSyntax = """
-      extension \(type.trimmed): BoutiqueSchema {}
+      extension \(type.trimmed): BoutiqueSchemaColumns {}
       """
     guard let extensionDecl = ext.as(ExtensionDeclSyntax.self) else { return [] }
     return [extensionDecl]

@@ -14,6 +14,7 @@ import TursoKit
 public final class BoutiqueDBSyncEngine: Sendable {
   public let adapter: CloudKitSyncAdapter
   public var engine: TursoCKSyncEngine { adapter.engine }
+  private var commitObserverID: UUID?
 
   public init(
     connection: TursoConnection,
@@ -62,11 +63,12 @@ public final class BoutiqueDBSyncEngine: Sendable {
 
   /// Registers auto-drain on ``BoutiqueDB/onLocalCommit`` after each successful write.
   public func attach(to db: BoutiqueDB, automaticallyDrain: Bool = true) {
-    guard automaticallyDrain else {
-      db.onLocalCommit = nil
-      return
+    if let commitObserverID {
+      db.removePostCommitObserver(commitObserverID)
+      self.commitObserverID = nil
     }
-    db.onLocalCommit = { [weak self] in
+    guard automaticallyDrain else { return }
+    commitObserverID = db.addPostCommitObserver { [weak self] in
       guard let self else { return }
       _ = try self.engine.drainCDC()
     }

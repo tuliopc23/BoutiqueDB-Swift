@@ -48,6 +48,7 @@ struct LiveQueryIntegrationTests {
       .appendingPathComponent("boutique-int-\(UUID().uuidString).db")
     let db = try BoutiqueDB(url: url, startListening: true)
     defer { try? FileManager.default.removeItem(at: url) }
+    defer { db.close() }
 
     // Match StructuredQueries default table naming for `IntegrationNote`.
     try await db.execute(
