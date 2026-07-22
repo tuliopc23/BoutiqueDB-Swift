@@ -20,9 +20,10 @@ Never ship macOS-only binaries for SPI. See `AGENTS.md`.
 - [x] `Package.swift` without `unsafeFlags` (binary `TursoSDK`)
 - [x] Public repo [BoutiqueDB-Swift](https://github.com/tuliopc23/BoutiqueDB-Swift)
 - [x] Multi-arch xcframework (macOS + iOS device + Simulator)
-- [x] Release `v0.2.1` + zip asset + checksum in `Package.swift`
-- [x] Production-beta source release `v0.3.0-beta.1` reusing the verified v0.2.1 binary
+- [x] Stable engine binary `v0.2.1` + zip asset + checksum in `Package.swift`
+- [x] Production-beta package tag `v0.3.0-beta.1` (reuses verified v0.2.1 binary)
 - [ ] SPI “Add a Package” OAuth (owner): https://swiftpackageindex.com/add-a-package
+- [ ] GitHub Actions billing unlocked (hosted runners currently blocked on account)
 
 ## Build binary
 
@@ -63,3 +64,20 @@ git push public main v0.3.0-beta.1
 2. No `unsafeFlags`.
 3. https://swiftpackageindex.com/add-a-package → `https://github.com/tuliopc23/BoutiqueDB-Swift`
 4. Expect macOS + iOS platform badges after first index.
+
+## GitHub Actions note
+
+If Actions jobs fail immediately with *account is locked due to a billing issue*,
+that is a **hosting/billing lock**, not a package defect. Local gates before push:
+
+```bash
+swift build -Xswiftc -warnings-as-errors
+swift test
+swift format lint --strict --recursive Sources Tests Package.swift
+./Scripts/build-docs.sh
+(cd Examples/Consumer && swift build -Xswiftc -warnings-as-errors)
+xcodebuild -scheme BoutiqueDB-Package \
+  -destination 'generic/platform=iOS Simulator' \
+  -skipPackagePluginValidation -skipMacroValidation \
+  ONLY_ACTIVE_ARCH=YES ARCHS=arm64 build
+```

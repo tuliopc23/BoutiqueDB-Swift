@@ -9,7 +9,8 @@ This package is for **Swift / Apple apps** (iOS + macOS) via SPM / SPI only.
 
 - **Do not** add .NET, Java, Python, Go, npm, crates.io, or other registry publish workflows.
 - **Do not** mirror upstream Turso multi-language binding CI into this repo.
-- Engine monorepo (`BoutiqueDB`) is a private build input for `sdk-kit`; product surface is this Swift package.
+- Engine monorepo (`BoutiqueDB`) is a build input for `sdk-kit` only; **product surface is this Swift package**.
+- Package SPM version = **git tag** (e.g. `0.3.0-beta.1`). `Package.swift` `tursoSDKVersion` is the **engine binary release tag** (may lag package tags when a beta reuses a verified zip).
 
 ## Permanent packaging rule (SPI / App Store)
 

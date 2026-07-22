@@ -5,17 +5,17 @@ import PackageDescription
 
 // Turso engine: official sdk-kit, multi-arch binary xcframework (no unsafeFlags).
 //
-// ALWAYS ship macOS + iOS device + iOS Simulator (see AGENTS.md).
+// Package version for SPM consumers = git tag (e.g. 0.3.0-beta.1).
+// Binary asset version below is the engine zip tag (currently reuses v0.2.1).
+//
+// ALWAYS ship macOS + iOS device + iOS Simulator for stable releases (see AGENTS.md):
 //   ./Scripts/build-turso-sdk-xcframework.sh   # SLICES=all by default
 //
-// Distribution (SPI / consumers):
-//   GitHub Release asset TursoSDK.xcframework.zip + checksum below.
-// Local maintainer:
-//   BOUTIQUE_LOCAL_TURSO_SDK=1 swift test
+// Local maintainer: BOUTIQUE_LOCAL_TURSO_SDK=1 swift test
 
+// Engine binary release tag (GitHub asset path). Bump only when the zip changes.
 let tursoSDKVersion = "0.2.1"
 let tursoSDKChecksum = "0eac7ae71f31fbe5ab211575cbbb06ec8d37632003e989bcde3757f365c25e19"
-// Release tag is `v0.2.1` (release.yml); asset path must include the `v` prefix.
 let tursoSDKURL =
   "https://github.com/tuliopc23/BoutiqueDB-Swift/releases/download/v\(tursoSDKVersion)/TursoSDK.xcframework.zip"
 
