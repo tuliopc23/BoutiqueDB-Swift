@@ -55,7 +55,7 @@ full multi-architecture engine archive.
 
 ```bash
 git tag -a v0.3.0-beta.1 -m "BoutiqueDB 0.3.0-beta.1"
-git push public main v0.3.0-beta.1
+git push origin main v0.3.0-beta.1
 ```
 
 ## SPI
@@ -64,6 +64,21 @@ git push public main v0.3.0-beta.1
 2. No `unsafeFlags`.
 3. https://swiftpackageindex.com/add-a-package → `https://github.com/tuliopc23/BoutiqueDB-Swift`
 4. Expect macOS + iOS platform badges after first index.
+
+## Verifying a release asset
+
+Before tagging, confirm the published `TursoSDK.xcframework.zip` is multi-arch and
+matches `Package.swift`:
+
+```bash
+curl -L -o /tmp/TursoSDK.xcframework.zip \
+  https://github.com/tuliopc23/BoutiqueDB-Swift/releases/download/vX.Y.Z/TursoSDK.xcframework.zip
+swift package compute-checksum /tmp/TursoSDK.xcframework.zip
+unzip -q /tmp/TursoSDK.xcframework.zip -d /tmp/TursoSDK
+find /tmp/TursoSDK/TursoSDK.xcframework -name '*.a' -exec lipo -info {} \;
+```
+
+Expected slices: macOS `arm64`+`x86_64`, `ios-arm64`, `ios-*-simulator`.
 
 ## GitHub Actions note
 
