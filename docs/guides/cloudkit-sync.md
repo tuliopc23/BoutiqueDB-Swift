@@ -51,10 +51,48 @@ flowchart LR
         tables: syncedTables
     )
 
-    try await syncEngine.attach(to: db, automaticallyDrain: true)
+    syncEngine.attach(to: db, automaticallyDrain: true)
     ```
   </Step>
 </Steps>
+
+---
+
+## Background sync
+
+For automatic multi-device sync, register for remote notifications and background refresh:
+
+```swift AppDelegate.swift
+import UIKit
+import BoutiqueDB
+
+class AppDelegate: UIResponder, UIApplicationDelegate {
+    var syncEngine: BoutiqueDBSyncEngine?
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        syncEngine?.registerBackgroundTask()
+        syncEngine?.registerForRemoteNotifications()
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        syncEngine?.handleRemoteNotification(userInfo: userInfo, fetchCompletionHandler: completionHandler)
+    }
+
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        syncEngine?.scheduleBackgroundSync(earliestBeginDate: Date(timeIntervalSinceNow: 15 * 60))
+    }
+}
+```
+
+On macOS, wire `handleRemoteNotification(userInfo:)` to `NSApplicationDelegate.application(_:didReceiveRemoteNotification:)` and call `scheduleBackgroundSync(interval:)` to set up an `NSBackgroundActivityScheduler`.
 
 ---
 
