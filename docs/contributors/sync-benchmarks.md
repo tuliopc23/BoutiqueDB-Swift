@@ -10,6 +10,8 @@ Track these on a release branch before tagging. Use a Release build of the host 
 
 ## Benchmarks
 
+> Measured numbers are not yet populated. Fill these tables during the v1.0 RC and attach Instruments traces for regressions.
+
 ### 1. `drainCDC`
 
 | N local writes | Limit | Median ms | Notes |

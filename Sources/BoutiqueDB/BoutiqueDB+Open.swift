@@ -63,6 +63,19 @@ extension BoutiqueDB {
   ///   migrations: AppMigrations.plan
   /// )
   /// ```
+  ///
+  /// - Parameters:
+  ///   - url: Database file URL.
+  ///   - startListening: When `true` (default), starts the cooperative CDC listener.
+  ///   - enableCDC: When `true` (default), enables CDC on the primary connection.
+  ///   - concurrentWrites: Enables ``writeConcurrent(maxAttempts:_:)``. With CDC,
+  ///     this uses busy-retry `BEGIN IMMEDIATE`; without CDC it enables MVCC.
+  ///   - openOptions: Official Turso open flags. Defaults to `TursoOpenOptions.tursoEnhanced`.
+  ///   - encryption: Optional engine encryption.
+  ///   - multiProcess: Multi-process WAL (`multiprocess_wal` token). Requires App Group for extensions.
+  ///   - migrations: Optional ordered migration plan.
+  ///   - schemaModels: Models whose `boutiqueCreateStatements` are applied automatically.
+  ///   - schemaSync: Policy for applying schema models (`off`, `additive`, or `dropAndRecreate`).
   public static func open(
     url: URL,
     startListening: Bool = true,

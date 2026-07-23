@@ -19,10 +19,10 @@ Turso incorporates **Tantivy**, a Rust full-text engine that delivers high-perfo
 let options = TursoOpenOptions(experimentalFeatures: [.indexMethod])
 let db = try await BoutiqueDB.open(url: storeURL, options: options)
 
-// Create Tantivy BM25 Index on article content
+// Create a Turso FTS index on article content
 try await db.execute("""
     CREATE INDEX idx_articles_fts ON article (title, content)
-    USING tantivy (tokenizer = 'en_stem')
+    USING fts (tokenizer = 'en_stem')
 """)
 ```
 

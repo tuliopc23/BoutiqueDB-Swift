@@ -1,20 +1,25 @@
 # BoutiqueDB — Turso-exclusive features and macro opportunities
 
-This doc maps Turso-only features to the most ergonomic Swift API shape for BoutiqueDB. It separates *runtime/API* work from *macro/property-wrapper* work and flags what the current `bindings/c` (`libturso_sqlite3`) layer can actually expose.
+This doc maps Turso-only features to the most ergonomic Swift API shape for BoutiqueDB. It separates *runtime/API* work from *macro/property-wrapper* work and flags what the `sdk-kit` (`turso.h`) C ABI exposes.
 
-## Important caveat: the C compatibility layer
+## Important caveat: the sdk-kit C ABI
 
-`Bindings/c` implements the SQLite3 C API. It already exposes CDC (`PRAGMA capture_data_changes_conn`), `BEGIN CONCURRENT`, FTS, vector functions, materialized views, and normal SQL. What it does **not** expose is the Rust `Builder` API that SDKs use to toggle individual experimental features at open time.
+The package uses the official `sdk-kit` C ABI (`turso.h` / `libturso_sdk_kit`). It exposes CDC (`PRAGMA capture_data_changes_conn`), `BEGIN CONCURRENT`, FTS, vector functions, materialized views, normal SQL, and per-database experimental features through `turso_database_config_t`.
 
-The only global toggle in C is:
+Per-open flags are passed as a CSV string in `experimental_features`:
 
-```c
-void turso_enable_experimental(void);
-```
+- `views`
+- `custom_types`
+- `encryption`
+- `index_method`
+- `generated_columns`
+- `multiprocess_wal`
+- `attach`
+- `without_rowid`
+- `vacuum`
+- `mvcc_passive_checkpoint`
 
-which turns on **generated columns**, **vacuum**, and **WITHOUT ROWID** for subsequently opened databases. Features that require per-open flags (views, custom types, encryption, custom index methods, attach, multiprocess WAL) are currently unavailable through the plain `sqlite3_open` path unless we add new C functions or move to `sdk-kit`.
-
-This constraint heavily shapes what a Swift macro can actually do.
+These flags are opt-in and gated by `TursoOpenOptions` / `TursoCapabilities`.
 
 ---
 
@@ -56,7 +61,7 @@ Macro / property-wrapper need:
 Notes:
 
 - CDC and MVCC are mutually exclusive; `BoutiqueDB` should guard against enabling both on the same connection.
-- The current `bindings/c` C API supports this through SQL pragmas/statements, so no new Rust exports are needed.
+- The `sdk-kit` C API supports this through SQL pragmas/statements, so no new Rust exports are needed.
 
 ---
 
@@ -116,9 +121,10 @@ Macro need:
 
 - **Medium.** A small `@FTSIndex` macro reduces boilerplate and keeps column/tokenizer config type-safe. The query functions themselves are better as DSL methods because `swift-structured-queries` can compose them.
 
-C-binding limitation:
+C-binding notes:
 
-- FTS works through normal SQL, so no new Rust exports are needed. However, custom index methods require `--experimental-index-method` in the CLI/builder; the C binding currently enables only the blanket `turso_enable_experimental()`, which does **not** include custom index methods. For now, a BoutiqueDB app would need to be built against a `libturso_sqlite3` that has FTS enabled at compile time (it already is in the vendored build).
+- FTS works through normal SQL, so no new Rust exports are needed.
+- Custom index methods (`CREATE INDEX ... USING fts/vector`) require the `index_method` token in `turso_database_config_t.experimental_features`; `TursoOpenOptions.tursoEnhanced` includes it by default.
 
 ---
 

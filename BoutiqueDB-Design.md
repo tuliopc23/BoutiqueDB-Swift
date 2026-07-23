@@ -12,29 +12,30 @@
 BoutiqueDB/
 ├── Package.swift                         # name: BoutiqueDB
 ├── Sources/
-│   ├── CTursoSQLite3/                    # C target wrapping bindings/c sqlite3.h
+│   ├── CTursoSDK/                        # C target wrapping the sdk-kit `turso.h`
 │   ├── TursoKit/                         # low-level handle: Database, Connection, Statement, Value, CDC
 │   ├── StructuredQueriesTurso/           # Swift-StructuredQueries driver for @Table models
 │   ├── TursoCKSync/                      # CKSyncEngine bridge + CDC sync
-│   └── TursoObservation/                 # TursoStore / TursoQueryBox polling invalidation
+│   ├── TursoObservation/                 # TursoStore / TursoQueryBox polling invalidation
+│   └── BoutiqueDBMacros/                 # @BoutiqueTable, @GeneratedColumn, @FTSIndex, @VectorIndex, @MaterializedView
 └── Vendor/
-    └── TursoSQLite3.xcframework          # prebuilt libturso_sqlite3 (macOS arm64)
+    └── TursoSDK.xcframework              # prebuilt sdk-kit binary (macOS + iOS, local or downloaded)
 ```
 
-- **Engine binding**: uses the `bindings/c` SQLite3 compatibility layer (`libturso_sqlite3.a`), not the newer `sdk-kit` C API.
-- **Query DSL**: Point-Free's `swift-structured-queries` with `@Table`, `@Column`, `#sql`, etc.
-- **Observation**: manual `TursoStore` polling of `turso_cdc`; no `@LiveQuery` property wrapper yet.
-- **Sync**: `TursoCKSyncEngine` using `CKSyncEngine`, `SyncMetadataStore`, `RecordMapper`.
+- **Engine binding**: uses the official `sdk-kit` C API (`turso.h` / `libturso_sdk_kit`), not the older `bindings/c` SQLite3 compatibility layer.
+- **Query DSL**: Point-Free's `swift-structured-queries` with `@Table`/`@Column`, plus BoutiqueDB macros `@BoutiqueTable`, `@GeneratedColumn`, `@FTSIndex`, `@VectorIndex`, and `@MaterializedView`.
+- **Observation**: `TursoStore` polls `turso_cdc`; `@LiveQuery` and `@LiveQueryOne` property wrappers refresh on changes.
+- **Sync**: `TursoCKSyncEngine` using `CKSyncEngine`, `SyncMetadataStore`, `RecordMapper`; `BoutiqueDBSyncEngine` provides a SwiftUI-friendly façade.
 
 ## 3. Binding decision
 
-The project already links `libturso_sqlite3` from `bindings/c`. This is the fastest path because:
+The project links the official `sdk-kit` `libturso_sdk_kit` via a binary `TursoSDK.xcframework` and the `CTursoSDK` C target wrapping `turso.h`. This gives:
 
-- It gives a normal SQLite3 API surface that `swift-structured-queries` can consume.
-- It avoids writing a new driver for the `sdk-kit` native API.
-- The main missing SQLite hooks (`update_hook`, `commit_hook`, etc.) are worked around via **Turso CDC** (`PRAGMA capture_data_changes_conn`).
+- Full access to Turso-only features (`async_io`, MVCC `BEGIN CONCURRENT`, encryption, views, custom index methods, generated columns, etc.) through `turso_database_config_t`.
+- A normal SQL execution surface that `swift-structured-queries` can consume.
+- CDC (`PRAGMA capture_data_changes_conn`) for observation and sync, since `sdk-kit` does not expose `update_hook` or `commit_hook`.
 
-Future option: migrate to `sdk-kit/turso.h` if we need Turso's cooperative async I/O, MVCC `BEGIN CONCURRENT`, or encryption. For a SQLiteData-like higher-level framework, the SQLite3 layer is sufficient today.
+The older `bindings/c` SQLite3 compatibility layer has been retired.
 
 ## 4. Macro / model layer
 
@@ -115,8 +116,8 @@ See `BoutiqueDB-TursoFeatures.md` for a full analysis of which Turso-exclusive f
 
 ## 9. Packaging
 
-- Keep building `libturso_sqlite3` with `Scripts/build-turso.sh` (depends on `../turso-src`).
-- The Swift package uses `unsafeFlags` to link the prebuilt static lib; this is acceptable for local/team but blocks Swift Package Index. For SPI, move to an `xcframework` binary target and a release pipeline.
+- Build the multi-arch `TursoSDK.xcframework` with `Scripts/build-turso-sdk-xcframework.sh` (depends on `BoutiqueDB` engine source via `TURSO_SRC`, default `../BoutiqueDB`).
+- The Swift package uses a binary target (`TursoSDK`) with no `unsafeFlags`, so it is SPI-safe. Release assets are published on GitHub Releases and referenced by `Package.swift`.
 
 ## 10. Current status
 
@@ -127,7 +128,7 @@ See `BoutiqueDB-TursoFeatures.md` for a full analysis of which Turso-exclusive f
 - [x] `BoutiqueDBSyncEngine` wrapper over `TursoCKSyncEngine`.
 - [x] `BoutiqueDBTests` with CRUD and `@LiveQuery` refresh assertions.
 - [x] `swift build` and `swift test` pass.
-- [x] `Scripts/build-turso.sh` updated to avoid copying the `.dylib` whose install name breaks `swift test`.
+- [x] `Scripts/build-turso-sdk-xcframework.sh` builds a multi-arch xcframework and avoids the install-name issues of a copied `.dylib`.
 
 ## 11. Immediate next steps
 
@@ -148,6 +149,6 @@ Top priorities from that task list:
 
 Open questions, blockers, and risks are now maintained centrally in `../BoutiqueDB/BoutiqueDB-Issues.md` (BD-001 through BD-012). The key decisions resolved for v2 are:
 
-- Stay on `bindings/c` SQLite3 compat for v2; `sdk-kit` migration is post-v2 (BD-013).
+- Migrated to the `sdk-kit` (`turso.h`) engine binding (BD-013).
 - Minimum OS remains iOS 17 / macOS 14 for `CKSyncEngine`; `swift-perception` back-ports observation to iOS 15 / macOS 12 (BD-006).
-- Module names stay: `TursoKit`, `StructuredQueriesTurso`, `TursoObservation`, `TursoCKSync`, `BoutiqueDB` (umbrella), plus the new `BoutiqueDBMacros` target.
+- Module names stay: `TursoKit`, `StructuredQueriesTurso`, `TursoObservation`, `TursoCKSync`, `BoutiqueDB` (umbrella), plus `BoutiqueDBMacros` and `CTursoSDK`.

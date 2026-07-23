@@ -15,6 +15,7 @@ public struct TursoCapabilities: Sendable, Equatable {
   public var encryption: Bool
   public var multiProcessWAL: Bool
   public var generatedColumns: Bool
+  public var customTypes: Bool
 
   public static let unknown = TursoCapabilities(
     cdc: false,
@@ -25,7 +26,8 @@ public struct TursoCapabilities: Sendable, Equatable {
     materializedViews: false,
     encryption: false,
     multiProcessWAL: false,
-    generatedColumns: false
+    generatedColumns: false,
+    customTypes: false
   )
 
   /// Probe a live connection with cheap SQL capability checks.
@@ -34,6 +36,7 @@ public struct TursoCapabilities: Sendable, Equatable {
     let options = connection.database?.openOptions
     caps.cdc = probeCDC(on: connection)
     caps.generatedColumns = options?.experimentalFeatures.contains(.generatedColumns) == true
+    caps.customTypes = options?.experimentalFeatures.contains(.customTypes) == true
     caps.multiProcessWAL = options?.experimentalFeatures.contains(.multiprocessWAL) == true
     caps.encryption =
       options?.experimentalFeatures.contains(.encryption) == true

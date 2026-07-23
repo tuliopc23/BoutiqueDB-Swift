@@ -26,7 +26,7 @@ BoutiqueDB supports **iOS 17.0+** and **macOS 14.0+**. You can install it direct
 Add `BoutiqueDB-Swift` to your `Package.swift` dependencies array:
 
 ```swift Package.swift
-// swift-tools-version: 5.9
+// swift-tools-version: 6.1
 import PackageDescription
 
 let package = Package(

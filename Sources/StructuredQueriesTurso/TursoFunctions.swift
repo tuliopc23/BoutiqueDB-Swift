@@ -21,6 +21,16 @@ public func vectorDistanceCos(
   )
 }
 
+public func vectorDistanceCos(
+  _ lhs: some QueryExpression,
+  _ rhs: Vector32Sparse
+) -> some QueryExpression<Double> {
+  SQLQueryExpression(
+    "vector_distance_cos(\(lhs), vector32_sparse(\(quote: rhs.jsonLiteral, delimiter: .text)))",
+    as: Double.self
+  )
+}
+
 public func vectorDistanceL2(
   _ lhs: some QueryExpression,
   _ rhs: some QueryExpression
@@ -34,6 +44,16 @@ public func vectorDistanceL2(
 ) -> some QueryExpression<Double> {
   SQLQueryExpression(
     "vector_distance_l2(\(lhs), vector32(\(quote: rhs.jsonLiteral, delimiter: .text)))",
+    as: Double.self
+  )
+}
+
+public func vectorDistanceL2(
+  _ lhs: some QueryExpression,
+  _ rhs: Vector32Sparse
+) -> some QueryExpression<Double> {
+  SQLQueryExpression(
+    "vector_distance_l2(\(lhs), vector32_sparse(\(quote: rhs.jsonLiteral, delimiter: .text)))",
     as: Double.self
   )
 }
@@ -55,6 +75,16 @@ public func vectorDistanceDot(
   )
 }
 
+public func vectorDistanceDot(
+  _ lhs: some QueryExpression,
+  _ rhs: Vector32Sparse
+) -> some QueryExpression<Double> {
+  SQLQueryExpression(
+    "vector_distance_dot(\(lhs), vector32_sparse(\(quote: rhs.jsonLiteral, delimiter: .text)))",
+    as: Double.self
+  )
+}
+
 public func vectorDistanceJaccard(
   _ lhs: some QueryExpression,
   _ rhs: some QueryExpression
@@ -68,6 +98,16 @@ public func vectorDistanceJaccard(
 ) -> some QueryExpression<Double> {
   SQLQueryExpression(
     "vector_distance_jaccard(\(lhs), vector32(\(quote: rhs.jsonLiteral, delimiter: .text)))",
+    as: Double.self
+  )
+}
+
+public func vectorDistanceJaccard(
+  _ lhs: some QueryExpression,
+  _ rhs: Vector32Sparse
+) -> some QueryExpression<Double> {
+  SQLQueryExpression(
+    "vector_distance_jaccard(\(lhs), vector32_sparse(\(quote: rhs.jsonLiteral, delimiter: .text)))",
     as: Double.self
   )
 }

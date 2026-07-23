@@ -28,10 +28,10 @@ let db = try await BoutiqueDB.open(
     options: options
 )
 
-// Create Tantivy FTS index on title and body columns
+// Create a Turso FTS index on title and body columns
 try await db.execute("""
-    CREATE INDEX idx_notes_fts ON note (title, body) 
-    USING tantivy (tokenizer = 'en_stem')
+    CREATE INDEX idx_notes_fts ON note (title, body)
+    USING fts (tokenizer = 'en_stem')
 """)
 ```
 
@@ -118,16 +118,11 @@ Protect sensitive user data inside the iOS Keychain using Turso's zero-overhead 
 ```swift KeyedDB.swift
 import BoutiqueDB
 
-let secretKeyData = KeychainManager.getOrCreateDatabaseKey()
-
-let options = TursoOpenOptions(
-    encryptionKey: secretKeyData, // 256-bit key
-    cipher: .aegis256            // AEGIS-256 (ARMv8 hardware accelerated)
-)
+let secretKeyData = KeychainManager.getOrCreateDatabaseKey() // 256-bit key
 
 let db = try await BoutiqueDB.open(
     url: BoutiqueDB.applicationSupportURL().appendingPathComponent("secure.sqlite"),
-    options: options
+    encryption: .aegis256(key: secretKeyData) // AEGIS-256 (ARMv8 hardware accelerated)
 )
 ```
 

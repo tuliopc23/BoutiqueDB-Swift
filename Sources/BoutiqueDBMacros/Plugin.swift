@@ -5,6 +5,7 @@ import SwiftSyntaxMacros
 struct BoutiqueDBMacrosPlugin: CompilerPlugin {
   let providingMacros: [Macro.Type] = [
     BoutiqueTableMacro.self,
+    GeneratedColumnMacro.self,
     FTSIndexMacro.self,
     VectorIndexMacro.self,
     MaterializedViewMacro.self,
