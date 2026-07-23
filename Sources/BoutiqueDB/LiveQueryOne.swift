@@ -79,7 +79,7 @@ where Element == Element.QueryOutput {
     isLoading = true
     let q = query
     do {
-      let row = try await db.read { try q().fetchOne($0.connection) }
+      let row = try await db.read { try await q().fetchOne($0.connection) }
       guard
         !Task.isCancelled, queryRevision == self.queryRevision,
         loadRevision == self.loadRevision

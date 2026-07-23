@@ -13,7 +13,7 @@ import TursoKit
 @MainActor
 public final class BoutiqueDBSyncEngine: Sendable {
   public let adapter: CloudKitSyncAdapter
-  public var engine: TursoCKSyncEngine { adapter.engine }
+  public nonisolated var engine: TursoCKSyncEngine { adapter.engine }
   private var commitObserverID: UUID?
   private weak var attachedDB: BoutiqueDB?
 
@@ -24,7 +24,7 @@ public final class BoutiqueDBSyncEngine: Sendable {
     conflictPolicy: ConflictPolicy = .serverWins,
     maxBatchSize: Int = 250,
     enablesCloudKit: Bool = true
-  ) throws {
+  ) async throws {
     let configuration = TursoCKSyncConfiguration(
       containerIdentifier: containerIdentifier,
       syncedTables: syncedTables,
@@ -33,7 +33,7 @@ public final class BoutiqueDBSyncEngine: Sendable {
       drainCDCLimit: 500,
       enablesCloudKit: enablesCloudKit
     )
-    self.adapter = try CloudKitSyncAdapter(
+    self.adapter = try await CloudKitSyncAdapter(
       connection: connection,
       configuration: configuration
     )
@@ -47,8 +47,8 @@ public final class BoutiqueDBSyncEngine: Sendable {
     conflictPolicy: ConflictPolicy = .serverWins,
     maxBatchSize: Int = 250,
     enablesCloudKit: Bool = true
-  ) throws {
-    try self.init(
+  ) async throws {
+    try await self.init(
       connection: db.unsafeConnection,
       containerIdentifier: containerIdentifier,
       syncedTables: syncedTables,
@@ -68,8 +68,9 @@ public final class BoutiqueDBSyncEngine: Sendable {
     guard automaticallyDrain else { return }
     attachedDB = db
     commitObserverID = db.addPostCommitObserver { [weak self] in
-      guard let self else { return }
-      _ = try self.engine.drainCDC()
+      Task { @MainActor [weak self] in
+        _ = try? await self?.engine.drainCDC()
+      }
     }
   }
 
@@ -91,13 +92,13 @@ public final class BoutiqueDBSyncEngine: Sendable {
     await adapter.stop()
   }
 
-  public func syncStatus() -> AsyncStream<SyncStatus> {
-    adapter.syncStatus()
+  public func syncStatus() async -> AsyncStream<SyncStatus> {
+    await adapter.syncStatus()
   }
 
   @discardableResult
-  public func drainCDC(limit: Int = 500) throws -> Int {
-    try engine.drainCDC(limit: limit)
+  public func drainCDC(limit: Int = 500) async throws -> Int {
+    try await engine.drainCDC(limit: limit)
   }
 
   @discardableResult
@@ -114,11 +115,12 @@ public final class BoutiqueDBSyncEngine: Sendable {
   }
 
   public func syncChanges() async throws {
-    try await adapter.syncChanges()
+    try await fetchChanges()
+    try await sendChanges()
   }
 
   @discardableResult
-  public func performLocalWrite(_ body: () throws -> Void) throws -> Int {
-    try engine.performLocalWrite(body)
+  public func performLocalWrite(_ body: @Sendable () async throws -> Void) async throws -> Int {
+    try await engine.performLocalWrite(body)
   }
 }

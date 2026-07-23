@@ -8,11 +8,11 @@ import TursoObservation
 
 @Suite("TursoCKSync bridge")
 struct TursoCKSyncTests {
-  private func makeConnection() throws -> (URL, TursoConnection) {
+  private func makeConnection() async throws -> (URL, TursoConnection) {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("turso-ck-\(UUID().uuidString).db")
-    let conn = try TursoDatabase(url: url).connect(enableCDC: true)
-    try conn.execute(
+    let conn = try await TursoDatabase(url: url).connect(enableCDC: true)
+    try await conn.execute(
       """
       CREATE TABLE notes (
         id TEXT PRIMARY KEY NOT NULL,
@@ -37,54 +37,54 @@ struct TursoCKSyncTests {
     )
   }
 
-  @Test func metadataAndStatePersistence() throws {
-    let (url, conn) = try makeConnection()
+  @Test func metadataAndStatePersistence() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
     let meta = SyncMetadataStore(connection: conn)
-    try meta.migrate()
-    #expect(try meta.loadCDCCursor() == 0)
-    #expect(try meta.loadStateSerialization() == nil)
+    try await meta.migrate()
+    #expect(try await meta.loadCDCCursor() == 0)
+    #expect(try await meta.loadStateSerialization() == nil)
 
-    try meta.saveCDCCursor(42)
-    #expect(try meta.loadCDCCursor() == 42)
+    try await meta.saveCDCCursor(42)
+    #expect(try await meta.loadCDCCursor() == 42)
 
-    try meta.upsertRecordMeta(
+    try await meta.upsertRecordMeta(
       table: "notes",
       rowPK: "abc",
       recordName: "notes:abc",
       zoneName: "app.default",
       systemFields: Data([1, 2, 3])
     )
-    #expect(try meta.systemFields(table: "notes", rowPK: "abc") == Data([1, 2, 3]))
+    #expect(try await meta.systemFields(table: "notes", rowPK: "abc") == Data([1, 2, 3]))
   }
 
-  @Test func outboundCDCDrainBuildsPendingChanges() throws {
-    let (url, conn) = try makeConnection()
+  @Test func outboundCDCDrainBuildsPendingChanges() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
-    let bridge = try TursoCKSyncEngine(
+    let bridge = try await TursoCKSyncEngine(
       connection: conn,
       configuration: syncConfiguration
     )
-    try bridge.start(automaticallySync: false)
+    try await bridge.start(automaticallySync: false)
 
     let id = UUID().uuidString
-    try conn.execute(
+    try await conn.execute(
       "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
       [.text(id), .text("T"), .text("B"), .text("2026-01-01T00:00:00Z")]
     )
-    let rawCDC = try conn.query(
+    let rawCDC = try await conn.query(
       "SELECT change_id, change_type, table_name, id FROM turso_cdc WHERE change_type != 2"
     )
     #expect(!rawCDC.isEmpty)
 
-    let drained = try bridge.drainCDC()
+    let drained = try await bridge.drainCDC()
     #expect(drained >= 1)
 
-    let pending = bridge.pendingRecordZoneChanges
+    let pending = await bridge.pendingRecordZoneChanges
     let names: [String] = pending.compactMap { change in
       switch change {
       case .saveRecord(let recordID), .deleteRecord(let recordID):
@@ -95,57 +95,59 @@ struct TursoCKSyncTests {
     }
     #expect(names.contains("notes:\(id)"))
 
-    let record = try bridge.makeRecord(
-      for: CKRecord.ID(recordName: "notes:\(id)", zoneID: bridge.zoneID)
+    let record = try #require(
+      try await bridge.makeRecord(
+        for: CKRecord.ID(recordName: "notes:\(id)", zoneID: bridge.zoneID)
+      )
     )
-    #expect(record?["title"] as? String == "T")
-    #expect(try bridge.metadata.loadCDCCursor() > 0)
+    #expect(record["title"] as? String == "T")
+    #expect(try await bridge.metadata.loadCDCCursor() > 0)
   }
 
-  @Test func inboundApplyAndEchoSuppression() throws {
-    let (urlA, connA) = try makeConnection()
-    let (urlB, connB) = try makeConnection()
+  @Test func inboundApplyAndEchoSuppression() async throws {
+    let (urlA, connA) = try await makeConnection()
+    let (urlB, connB) = try await makeConnection()
     defer {
-      connB.close()
-      connA.close()
+      await connB.close()
+      await connA.close()
       try? FileManager.default.removeItem(at: urlA)
       try? FileManager.default.removeItem(at: urlB)
     }
 
-    let deviceA = try TursoCKSyncEngine(
+    let deviceA = try await TursoCKSyncEngine(
       connection: connA,
       configuration: syncConfiguration
     )
-    try deviceA.start(automaticallySync: false)
+    try await deviceA.start(automaticallySync: false)
 
-    let deviceB = try TursoCKSyncEngine(
+    let deviceB = try await TursoCKSyncEngine(
       connection: connB,
       configuration: syncConfiguration
     )
-    try deviceB.start(automaticallySync: false)
+    try await deviceB.start(automaticallySync: false)
 
     let id = UUID().uuidString
-    try deviceA.performLocalWrite {
-      try connA.execute(
+    try await deviceA.performLocalWrite {
+      try await connA.execute(
         "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
         [.text(id), .text("From A"), .text("body"), .text("2026-01-01T00:00:00Z")]
       )
     }
 
     let record = try #require(
-      try deviceA.makeRecord(
+      try await deviceA.makeRecord(
         for: CKRecord.ID(recordName: "notes:\(id)", zoneID: deviceA.zoneID)
       )
     )
 
     // Simulate CloudKit → device B
-    try deviceB.applyRemoteRecord(record)
+    try await deviceB.applyRemoteRecord(record)
 
-    let row = try connB.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])
+    let row = try await connB.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])
     #expect(row?["title"]?.stringValue == "From A")
 
     // Echo must not enqueue outbound pending for the inbound apply.
-    let pendingB = deviceB.pendingRecordZoneChanges
+    let pendingB = await deviceB.pendingRecordZoneChanges
     let echoed = pendingB.contains {
       if case .saveRecord(let rid) = $0 { return rid.recordName == "notes:\(id)" }
       return false
@@ -153,22 +155,22 @@ struct TursoCKSyncTests {
     #expect(!echoed)
 
     // Delete path
-    try deviceB.applyRemoteDeletion(
+    try await deviceB.applyRemoteDeletion(
       recordID: CKRecord.ID(recordName: "notes:\(id)", zoneID: deviceB.zoneID)
     )
-    #expect(try connB.queryOne("SELECT id FROM notes WHERE id = ?", [.text(id)]) == nil)
+    #expect(try await connB.queryOne("SELECT id FROM notes WHERE id = ?", [.text(id)]) == nil)
   }
 
-  @Test func systemFieldsRoundTrip() throws {
-    let (url, conn) = try makeConnection()
+  @Test func systemFieldsRoundTrip() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
-    let bridge = try TursoCKSyncEngine(
+    let bridge = try await TursoCKSyncEngine(
       connection: conn,
       configuration: syncConfiguration
     )
-    try bridge.start(automaticallySync: false)
+    try await bridge.start(automaticallySync: false)
 
     let id = UUID().uuidString
     let recordID = CKRecord.ID(recordName: "notes:\(id)", zoneID: bridge.zoneID)
@@ -178,73 +180,73 @@ struct TursoCKSyncTests {
     record["updatedAt"] = "2026-01-01T00:00:00Z"
     record["id"] = id
 
-    try bridge.applyRemoteRecord(record)
-    let fields = try bridge.metadata.systemFields(table: "notes", rowPK: id)
+    try await bridge.applyRemoteRecord(record)
+    let fields = try await bridge.metadata.systemFields(table: "notes", rowPK: id)
     #expect(fields != nil)
 
     // Local update then rebuild record should hydrate system fields.
-    try bridge.performLocalWrite {
-      try conn.execute(
+    try await bridge.performLocalWrite {
+      try await conn.execute(
         "UPDATE notes SET title = ? WHERE id = ?",
         [.text("X2"), .text(id)]
       )
     }
-    let rebuilt = try #require(try bridge.makeRecord(for: recordID))
+    let rebuilt = try #require(try await bridge.makeRecord(for: recordID))
     #expect(rebuilt["title"] as? String == "X2")
   }
 
-  @Test func accountWipeRebootstrap() throws {
-    let (url, conn) = try makeConnection()
+  @Test func accountWipeRebootstrap() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
-    let bridge = try TursoCKSyncEngine(
+    let bridge = try await TursoCKSyncEngine(
       connection: conn,
       configuration: syncConfiguration
     )
-    try bridge.start(automaticallySync: false)
+    try await bridge.start(automaticallySync: false)
 
-    try bridge.performLocalWrite {
-      try conn.execute(
+    try await bridge.performLocalWrite {
+      try await conn.execute(
         "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
         [.text("1"), .text("t"), .text("b"), .text("2026-01-01T00:00:00Z")]
       )
     }
-    #expect(try conn.query("SELECT * FROM notes").count == 1)
+    #expect(try await conn.query("SELECT * FROM notes").count == 1)
 
-    try bridge.wipeAndRebootstrap()
-    #expect(try conn.query("SELECT * FROM notes").isEmpty)
-    #expect(try bridge.metadata.loadCDCCursor() == 0)
-    #expect(try bridge.metadata.loadStateSerialization() == nil)
+    try await bridge.wipeAndRebootstrap()
+    #expect(try await conn.query("SELECT * FROM notes").isEmpty)
+    #expect(try await bridge.metadata.loadCDCCursor() == 0)
+    #expect(try await bridge.metadata.loadStateSerialization() == nil)
   }
 
   @MainActor
-  @Test func observationInvalidatesOnCDC() throws {
-    let (url, conn) = try makeConnection()
+  @Test func observationInvalidatesOnCDC() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
-    try conn.enableCaptureDataChanges(mode: .full)
+    try await conn.enableCaptureDataChanges(mode: .full)
 
-    let store = TursoStore(connection: conn)
+    let store = try await TursoStore(connection: conn)
     let before = store.generation
 
-    try conn.execute(
+    try await conn.execute(
       "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
       [.text("obs"), .text("t"), .text("b"), .text("2026-01-01T00:00:00Z")]
     )
-    store.advanceFromCDC()
+    await store.advanceFromCDC()
     #expect(store.generation == before + 1)
   }
 
   /// Local stand-in for a two-device CloudKit round-trip (A → record → B).
   /// Full simulator CloudKit requires entitlements + iCloud account.
-  @Test func simulatedTwoDeviceRoundTrip() throws {
-    let (urlA, connA) = try makeConnection()
-    let (urlB, connB) = try makeConnection()
+  @Test func simulatedTwoDeviceRoundTrip() async throws {
+    let (urlA, connA) = try await makeConnection()
+    let (urlB, connB) = try await makeConnection()
     defer {
-      connB.close()
-      connA.close()
+      await connB.close()
+      await connA.close()
       try? FileManager.default.removeItem(at: urlA)
       try? FileManager.default.removeItem(at: urlB)
     }
@@ -255,42 +257,45 @@ struct TursoCKSyncTests {
       conflictPolicy: .serverWins,
       enablesCloudKit: false
     )
-    let a = try TursoCKSyncEngine(connection: connA, configuration: config)
-    let b = try TursoCKSyncEngine(connection: connB, configuration: config)
-    try a.start(automaticallySync: false)
-    try b.start(automaticallySync: false)
+    let a = try await TursoCKSyncEngine(connection: connA, configuration: config)
+    let b = try await TursoCKSyncEngine(connection: connB, configuration: config)
+    try await a.start(automaticallySync: false)
+    try await b.start(automaticallySync: false)
 
     let id = UUID().uuidString
-    try a.performLocalWrite {
-      try connA.execute(
+    try await a.performLocalWrite {
+      try await connA.execute(
         "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
         [.text(id), .text("sync-me"), .text("payload"), .text("2026-07-21T00:00:00Z")]
       )
     }
     let outbound = try #require(
-      try a.makeRecord(for: CKRecord.ID(recordName: "notes:\(id)", zoneID: a.zoneID))
+      try await a.makeRecord(for: CKRecord.ID(recordName: "notes:\(id)", zoneID: a.zoneID))
     )
-    try b.applyRemoteRecord(outbound)
+    try await b.applyRemoteRecord(outbound)
 
     #expect(
-      try connB.queryOne("SELECT title, body FROM notes WHERE id = ?", [.text(id)])?["title"]?
+      try await connB.queryOne("SELECT title, body FROM notes WHERE id = ?", [.text(id)])?["title"]?
         .stringValue == "sync-me"
     )
 
-    try a.performLocalWrite {
-      try connA.execute("DELETE FROM notes WHERE id = ?", [.text(id)])
+    try await a.performLocalWrite {
+      try await connA.execute("DELETE FROM notes WHERE id = ?", [.text(id)])
     }
-    try b.applyRemoteDeletion(recordID: CKRecord.ID(recordName: "notes:\(id)", zoneID: b.zoneID))
-    #expect(try connB.query("SELECT * FROM notes WHERE id = ?", [.text(id)]).isEmpty)
+    try await b.applyRemoteDeletion(recordID: CKRecord.ID(recordName: "notes:\(id)", zoneID: b.zoneID))
+    #expect(try await connB.query("SELECT * FROM notes WHERE id = ?", [.text(id)]).isEmpty)
   }
 
-  @Test func multiTableSyncRoundTrip() throws {
+  @Test func multiTableSyncRoundTrip() async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("turso-ck-multi-\(UUID().uuidString).db")
-    let conn = try TursoDatabase(url: url).connect(enableCDC: true)
-    defer { try? FileManager.default.removeItem(at: url) }
+    let conn = try await TursoDatabase(url: url).connect(enableCDC: true)
+    defer {
+      try? FileManager.default.removeItem(at: url)
+      await conn.close()
+    }
 
-    try conn.execute(
+    try await conn.execute(
       """
       CREATE TABLE notes (
         id TEXT PRIMARY KEY NOT NULL,
@@ -300,7 +305,7 @@ struct TursoCKSyncTests {
       )
       """
     )
-    try conn.execute(
+    try await conn.execute(
       """
       CREATE TABLE tags (
         id TEXT PRIMARY KEY NOT NULL,
@@ -318,19 +323,20 @@ struct TursoCKSyncTests {
       ],
       enablesCloudKit: false
     )
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: config)
-    try engine.start(automaticallySync: false)
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: config)
+    try await engine.start(automaticallySync: false)
 
-    try engine.performLocalWrite {
-      try conn.execute(
+    try await engine.performLocalWrite {
+      try await conn.execute(
         "INSERT INTO notes (id, title, body, updatedAt) VALUES ('n1','t','b','2026-01-01T00:00:00Z')"
       )
-      try conn.execute(
+      try await conn.execute(
         "INSERT INTO tags (id, name, updatedAt) VALUES ('t1','swift','2026-01-01T00:00:00Z')"
       )
     }
 
-    let pendingNames = engine.pendingRecordZoneChanges.compactMap { change -> String? in
+    let pending = await engine.pendingRecordZoneChanges
+    let pendingNames = pending.compactMap { change -> String? in
       if case .saveRecord(let id) = change { return id.recordName }
       return nil
     }
@@ -338,10 +344,10 @@ struct TursoCKSyncTests {
     #expect(pendingNames.contains("tags:t1"))
   }
 
-  @Test func pendingBatchesRespectMaxBatchSize() throws {
-    let (url, conn) = try makeConnection()
+  @Test func pendingBatchesRespectMaxBatchSize() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
     let config = TursoCKSyncConfiguration(
       containerIdentifier: "iCloud.com.turso.cloudkit.tests",
@@ -350,12 +356,12 @@ struct TursoCKSyncTests {
       drainCDCLimit: 500,
       enablesCloudKit: false
     )
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: config)
-    try engine.start(automaticallySync: false)
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: config)
+    try await engine.start(automaticallySync: false)
 
-    try engine.performLocalWrite {
+    try await engine.performLocalWrite {
       for i in 0..<600 {
-        try conn.execute(
+        try await conn.execute(
           "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
           [
             .text("id-\(i)"),
@@ -367,7 +373,7 @@ struct TursoCKSyncTests {
       }
     }
 
-    let batches = engine.pendingBatches()
+    let batches = await engine.pendingBatches()
     #expect(!batches.isEmpty)
     #expect(batches.allSatisfy { $0.count <= 250 })
     let total = batches.reduce(0) { $0 + $1.count }
@@ -377,10 +383,10 @@ struct TursoCKSyncTests {
     #expect(batches.count >= 2)  // 400+ pending at size 250 ⇒ multiple batches
   }
 
-  @Test func lastWriterWinsConflict() throws {
-    let (url, conn) = try makeConnection()
+  @Test func lastWriterWinsConflict() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
     let config = TursoCKSyncConfiguration(
       containerIdentifier: "iCloud.com.turso.cloudkit.tests",
@@ -388,12 +394,12 @@ struct TursoCKSyncTests {
       conflictPolicy: .lastWriterWins(field: "updatedAt"),
       enablesCloudKit: false
     )
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: config)
-    try engine.start(automaticallySync: false)
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: config)
+    try await engine.start(automaticallySync: false)
 
     let id = "lw1"
-    try engine.performLocalWrite {
-      try conn.execute(
+    try await engine.performLocalWrite {
+      try await conn.execute(
         "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
         [.text(id), .text("local"), .text("b"), .text("2026-07-22T10:05:00Z")]
       )
@@ -406,25 +412,26 @@ struct TursoCKSyncTests {
     server["body"] = "b"
     server["updatedAt"] = "2026-07-22T10:00:00Z"
 
-    let failed = try #require(try engine.makeRecord(for: recordID))
-    try engine.resolveConflictForTesting(failedRecord: failed, serverRecord: server)
+    let failed = try #require(try await engine.makeRecord(for: recordID))
+    try await engine.resolveConflictForTesting(failedRecord: failed, serverRecord: server)
 
     // Local is newer → keep local title, re-pend save.
-    let title = try conn.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])?[
+    let title = try await conn.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])?[
       "title"
     ]?.stringValue
     #expect(title == "local")
-    let pending = engine.pendingRecordZoneChanges.contains {
+    let pending = await engine.pendingRecordZoneChanges
+    let hasPending = pending.contains {
       if case .saveRecord(let rid) = $0 { return rid.recordName == "notes:\(id)" }
       return false
     }
-    #expect(pending)
+    #expect(hasPending)
   }
 
-  @Test func serverWinsConflict() throws {
-    let (url, conn) = try makeConnection()
+  @Test func serverWinsConflict() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
     let config = TursoCKSyncConfiguration(
       containerIdentifier: "iCloud.com.turso.cloudkit.tests",
@@ -432,12 +439,12 @@ struct TursoCKSyncTests {
       conflictPolicy: .serverWins,
       enablesCloudKit: false
     )
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: config)
-    try engine.start(automaticallySync: false)
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: config)
+    try await engine.start(automaticallySync: false)
 
     let id = "sw1"
-    try engine.performLocalWrite {
-      try conn.execute(
+    try await engine.performLocalWrite {
+      try await conn.execute(
         "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
         [.text(id), .text("local"), .text("b"), .text("2026-07-22T10:05:00Z")]
       )
@@ -450,190 +457,196 @@ struct TursoCKSyncTests {
     server["body"] = "b"
     server["updatedAt"] = "2026-07-22T10:00:00Z"
 
-    let failed = try #require(try engine.makeRecord(for: recordID))
-    try engine.resolveConflictForTesting(failedRecord: failed, serverRecord: server)
+    let failed = try #require(try await engine.makeRecord(for: recordID))
+    try await engine.resolveConflictForTesting(failedRecord: failed, serverRecord: server)
 
-    let title = try conn.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])?[
+    let title = try await conn.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])?[
       "title"
     ]?.stringValue
     #expect(title == "server")
   }
 
-  @Test func clientWinsPreservesLocalPayloadForRetry() throws {
-    let (url, conn) = try makeConnection()
+  @Test func clientWinsPreservesLocalPayloadForRetry() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
     let config = TursoCKSyncConfiguration(
       containerIdentifier: "iCloud.com.turso.cloudkit.tests",
       syncedTables: [notesTable],
       conflictPolicy: .clientWins,
       enablesCloudKit: false
     )
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: config)
-    try engine.start(automaticallySync: false)
-    try engine.performLocalWrite {
-      try conn.execute(
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: config)
+    try await engine.start(automaticallySync: false)
+    try await engine.performLocalWrite {
+      try await conn.execute(
         "INSERT INTO notes (id, title, body, updatedAt) VALUES ('cw1','local','b','2026-07-22T10:05:00Z')"
       )
     }
 
     let recordID = CKRecord.ID(recordName: "notes:cw1", zoneID: engine.zoneID)
-    let failed = try #require(try engine.makeRecord(for: recordID))
+    let failed = try #require(try await engine.makeRecord(for: recordID))
     let server = CKRecord(recordType: "notes", recordID: recordID)
     server["id"] = "cw1"
     server["title"] = "server"
     server["body"] = "b"
     server["updatedAt"] = "2026-07-22T10:00:00Z"
 
-    try engine.resolveConflictForTesting(failedRecord: failed, serverRecord: server)
+    try await engine.resolveConflictForTesting(failedRecord: failed, serverRecord: server)
 
-    let outbound = try #require(try engine.makeRecord(for: recordID))
+    let outbound = try #require(try await engine.makeRecord(for: recordID))
     #expect(outbound["title"] as? String == "local")
     #expect(
-      try conn.queryOne("SELECT title FROM notes WHERE id = 'cw1'")?["title"]?.stringValue
+      try await conn.queryOne("SELECT title FROM notes WHERE id = 'cw1'")?["title"]?.stringValue
         == "local")
+    let pending = await engine.pendingRecordZoneChanges
     #expect(
-      engine.pendingRecordZoneChanges.contains { change in
+      pending.contains { change in
         if case .saveRecord(let id) = change { return id == recordID }
         return false
       })
   }
 
-  @Test func pendingChangesSurviveEngineRestart() throws {
-    let (url, conn) = try makeConnection()
+  @Test func pendingChangesSurviveEngineRestart() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
-    let first = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try first.start(automaticallySync: false)
-    try conn.execute(
+    defer { await conn.close() }
+    let first = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await first.start(automaticallySync: false)
+    try await conn.execute(
       "INSERT INTO notes (id, title, body, updatedAt) VALUES ('restart','local','b','2026-01-01T00:00:00Z')"
     )
-    _ = try first.drainCDC()
-    let cursor = try first.metadata.loadCDCCursor()
-    first.stop()
+    _ = try await first.drainCDC()
+    let cursor = try await first.metadata.loadCDCCursor()
+    await first.stop()
 
-    let restarted = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try restarted.start(automaticallySync: false)
-    #expect(try restarted.metadata.loadCDCCursor() == cursor)
+    let restarted = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await restarted.start(automaticallySync: false)
+    #expect(try await restarted.metadata.loadCDCCursor() == cursor)
+    let restartedPending = await restarted.pendingRecordZoneChanges
     #expect(
-      restarted.pendingRecordZoneChanges.contains { change in
+      restartedPending.contains { change in
         if case .saveRecord(let id) = change { return id.recordName == "notes:restart" }
         return false
       })
   }
 
-  @Test func acknowledgedPendingChangeDoesNotReturnAfterRestart() throws {
-    let (url, conn) = try makeConnection()
+  @Test func acknowledgedPendingChangeDoesNotReturnAfterRestart() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
-    let first = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try first.start(automaticallySync: false)
-    try conn.execute(
+    defer { await conn.close() }
+    let first = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await first.start(automaticallySync: false)
+    try await conn.execute(
       "INSERT INTO notes (id, title, body, updatedAt) VALUES ('acked','local','b','2026-01-01T00:00:00Z')"
     )
-    _ = try first.drainCDC()
+    _ = try await first.drainCDC()
     let recordID = CKRecord.ID(recordName: "notes:acked", zoneID: first.zoneID)
-    try first.acknowledgePendingChangeForTesting(recordID: recordID)
-    first.stop()
+    try await first.acknowledgePendingChangeForTesting(recordID: recordID)
+    await first.stop()
 
-    let restarted = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try restarted.start(automaticallySync: false)
+    let restarted = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await restarted.start(automaticallySync: false)
+    let restartedPending = await restarted.pendingRecordZoneChanges
     #expect(
-      !restarted.pendingRecordZoneChanges.contains { change in
+      !restartedPending.contains { change in
         if case .saveRecord(let id) = change { return id == recordID }
         return false
       })
   }
 
-  @Test func missingProviderRowRemovesDurableSave() throws {
-    let (url, conn) = try makeConnection()
+  @Test func missingProviderRowRemovesDurableSave() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
-    let first = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try first.start(automaticallySync: false)
-    try conn.execute(
+    defer { await conn.close() }
+    let first = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await first.start(automaticallySync: false)
+    try await conn.execute(
       "INSERT INTO notes (id, title, body, updatedAt) VALUES ('missing','local','b','2026-01-01T00:00:00Z')"
     )
-    _ = try first.drainCDC()
+    _ = try await first.drainCDC()
     let recordID = CKRecord.ID(recordName: "notes:missing", zoneID: first.zoneID)
-    try conn.execute("DELETE FROM notes WHERE id = 'missing'")
+    try await conn.execute("DELETE FROM notes WHERE id = 'missing'")
 
-    #expect(try first.recordForPendingSaveForTesting(recordID: recordID) == nil)
-    first.stop()
-    let restarted = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try restarted.start(automaticallySync: false)
+    #expect(try await first.recordForPendingSaveForTesting(recordID: recordID) == nil)
+    await first.stop()
+    let restarted = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await restarted.start(automaticallySync: false)
+    let restartedPending = await restarted.pendingRecordZoneChanges
     #expect(
-      !restarted.pendingRecordZoneChanges.contains { change in
+      !restartedPending.contains { change in
         if case .saveRecord(let id) = change { return id == recordID }
         return false
       })
   }
 
-  @Test func invalidRecordNameDoesNotAdvanceCursor() throws {
-    let (url, conn) = try makeConnection()
+  @Test func invalidRecordNameDoesNotAdvanceCursor() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try engine.start(automaticallySync: false)
+    defer { await conn.close() }
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await engine.start(automaticallySync: false)
     let oversizedID = String(repeating: "x", count: 300)
-    try conn.execute(
+    try await conn.execute(
       "INSERT INTO notes (id, title, body, updatedAt) VALUES (?, 't', 'b', '2026-01-01T00:00:00Z')",
       [.text(oversizedID)]
     )
 
-    #expect(throws: TursoCKSyncError.self) {
-      _ = try engine.drainCDC()
+    await #expect(throws: TursoCKSyncError.self) {
+      _ = try await engine.drainCDC()
     }
-    #expect(try engine.metadata.loadCDCCursor() == 0)
-    #expect(engine.pendingRecordZoneChanges.isEmpty)
+    #expect(try await engine.metadata.loadCDCCursor() == 0)
+    let pending = await engine.pendingRecordZoneChanges
+    #expect(pending.isEmpty)
   }
 
-  @Test func cloudKitRequiresExplicitContainer() throws {
-    let (url, conn) = try makeConnection()
+  @Test func cloudKitRequiresExplicitContainer() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
     let config = TursoCKSyncConfiguration(
       syncedTables: [notesTable],
       enablesCloudKit: true
     )
-    #expect(throws: TursoCKSyncError.missingCloudKitContainer) {
-      _ = try TursoCKSyncEngine(connection: conn, configuration: config)
+    await #expect(throws: TursoCKSyncError.missingCloudKitContainer) {
+      _ = try await TursoCKSyncEngine(connection: conn, configuration: config)
     }
   }
 
-  @Test func syncConfigurationRejectsReservedFieldsAndUniqueIndexes() throws {
-    let (url, conn) = try makeConnection()
+  @Test func syncConfigurationRejectsReservedFieldsAndUniqueIndexes() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
     let reserved = TursoCKSyncConfiguration(
       syncedTables: [SyncedTable(name: "notes", columns: ["recordID"])],
       enablesCloudKit: false
     )
-    #expect(throws: TursoCKSyncError.self) {
-      _ = try TursoCKSyncEngine(connection: conn, configuration: reserved)
+    await #expect(throws: TursoCKSyncError.self) {
+      _ = try await TursoCKSyncEngine(connection: conn, configuration: reserved)
     }
 
-    try conn.execute("CREATE UNIQUE INDEX notes_title_unique ON notes(title)")
-    #expect(
+    try await conn.execute("CREATE UNIQUE INDEX notes_title_unique ON notes(title)")
+    await #expect(
       throws: TursoCKSyncError.uniqueConstraintUnsupported(
         table: "notes",
         index: "notes_title_unique"
       )
     ) {
-      _ = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+      _ = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
     }
   }
 
-  @Test func inboundEchoSuppressionPreservesInterleavedLocalChange() throws {
-    let (url, primary) = try makeConnection()
-    defer { primary.close() }
+  @Test func inboundEchoSuppressionPreservesInterleavedLocalChange() async throws {
+    let (url, primary) = try await makeConnection()
+    defer { await primary.close() }
     defer { try? FileManager.default.removeItem(at: url) }
     let secondDatabase = TursoDatabase(url: url)
-    let writer = try secondDatabase.connect(enableCDC: true)
-    let engine = try TursoCKSyncEngine(connection: primary, configuration: syncConfiguration)
-    try engine.start(automaticallySync: false)
+    let writer = try await secondDatabase.connect(enableCDC: true)
+    defer { await writer.close() }
+    let engine = try await TursoCKSyncEngine(connection: primary, configuration: syncConfiguration)
+    try await engine.start(automaticallySync: false)
 
-    try writer.execute(
+    try await writer.execute(
       "INSERT INTO notes (id, title, body, updatedAt) VALUES ('local-interleaved','local','b','2026-01-01T00:00:00Z')"
     )
     let remoteID = CKRecord.ID(recordName: "notes:remote", zoneID: engine.zoneID)
@@ -642,61 +655,62 @@ struct TursoCKSyncTests {
     remote["title"] = "remote"
     remote["body"] = "b"
     remote["updatedAt"] = "2026-01-01T00:00:00Z"
-    try engine.applyRemoteRecord(remote)
+    try await engine.applyRemoteRecord(remote)
 
+    let pending = await engine.pendingRecordZoneChanges
     #expect(
-      engine.pendingRecordZoneChanges.contains { change in
+      pending.contains { change in
         if case .saveRecord(let id) = change { return id.recordName == "notes:local-interleaved" }
         return false
       })
   }
 
-  @Test func removingSyncedColumnRequiresExplicitReset() throws {
-    let (url, conn) = try makeConnection()
+  @Test func removingSyncedColumnRequiresExplicitReset() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
-    _ = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    defer { await conn.close() }
+    _ = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
     let changed = TursoCKSyncConfiguration(
       syncedTables: [SyncedTable(name: "notes", columns: ["title", "updatedAt"])],
       enablesCloudKit: false
     )
-    #expect(throws: TursoCKSyncError.self) {
-      _ = try TursoCKSyncEngine(connection: conn, configuration: changed)
+    await #expect(throws: TursoCKSyncError.self) {
+      _ = try await TursoCKSyncEngine(connection: conn, configuration: changed)
     }
   }
 
-  @Test func accountHashChangePreservesLocalData() throws {
-    let (url, conn) = try makeConnection()
+  @Test func accountHashChangePreservesLocalData() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try engine.start(automaticallySync: false)
-    try engine.noteAccountIdentity("account-a")
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await engine.start(automaticallySync: false)
+    try await engine.noteAccountIdentity("account-a")
 
-    try engine.performLocalWrite {
-      try conn.execute(
+    try await engine.performLocalWrite {
+      try await conn.execute(
         "INSERT INTO notes (id, title, body, updatedAt) VALUES ('1','t','b','2026-01-01T00:00:00Z')"
       )
     }
-    #expect(try conn.query("SELECT * FROM notes").count == 1)
+    #expect(try await conn.query("SELECT * FROM notes").count == 1)
 
-    try engine.noteAccountIdentity("account-b")
+    try await engine.noteAccountIdentity("account-b")
     // Local user data preserved; metadata wiped and rows re-enqueued.
-    #expect(try conn.query("SELECT * FROM notes").count == 1)
-    #expect(try engine.metadata.loadAccountHash() == "account-b")
+    #expect(try await conn.query("SELECT * FROM notes").count == 1)
+    #expect(try await engine.metadata.loadAccountHash() == "account-b")
   }
 
   @Test func cloudKitSyncAdapterStatusStream() async throws {
-    let (url, conn) = try makeConnection()
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
-    let adapter = try CloudKitSyncAdapter(
+    let adapter = try await CloudKitSyncAdapter(
       connection: conn,
       configuration: syncConfiguration
     )
-    var iterator = adapter.syncStatus().makeAsyncIterator()
+    var iterator = await adapter.syncStatus().makeAsyncIterator()
     let first = await iterator.next()
     #expect(first == .idle)
 
@@ -705,13 +719,13 @@ struct TursoCKSyncTests {
   }
 
   @Test func transportNeutralRemoteRecordRoundTrip() async throws {
-    let (url, conn) = try makeConnection()
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try engine.start(automaticallySync: false)
-    let adapter = CloudKitSyncAdapter(engine: engine)
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await engine.start(automaticallySync: false)
+    let adapter = await CloudKitSyncAdapter(engine: engine)
     let id = UUID().uuidString
     try await adapter.applyRemoteChanges([
       .upsert(
@@ -729,7 +743,7 @@ struct TursoCKSyncTests {
     ])
 
     #expect(
-      try conn.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])?["title"]?
+      try await conn.queryOne("SELECT title FROM notes WHERE id = ?", [.text(id)])?["title"]?
         .stringValue == "Neutral"
     )
     try await adapter.fetchChanges()
@@ -737,16 +751,16 @@ struct TursoCKSyncTests {
     try await adapter.syncChanges()
 
     try await adapter.applyRemoteChanges([.delete(recordName: "notes:\(id)")])
-    #expect(try conn.queryOne("SELECT id FROM notes WHERE id = ?", [.text(id)]) == nil)
+    #expect(try await conn.queryOne("SELECT id FROM notes WHERE id = ?", [.text(id)]) == nil)
   }
 
-  @Test func unreadableCloudKitAssetIsExplicitFailure() throws {
-    let (url, conn) = try makeConnection()
+  @Test func unreadableCloudKitAssetIsExplicitFailure() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try engine.start(automaticallySync: false)
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await engine.start(automaticallySync: false)
     let id = UUID().uuidString
     let record = CKRecord(
       recordType: "notes",
@@ -759,19 +773,19 @@ struct TursoCKSyncTests {
     record["body"] = "body"
     record["updatedAt"] = "2026-07-22T00:00:00Z"
 
-    #expect(throws: TursoCKSyncError.self) {
-      try engine.applyRemoteRecord(record)
+    await #expect(throws: TursoCKSyncError.self) {
+      try await engine.applyRemoteRecord(record)
     }
   }
 
   @Test func invalidTransportMetadataIsExplicitFailure() async throws {
-    let (url, conn) = try makeConnection()
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try engine.start(automaticallySync: false)
-    let adapter = CloudKitSyncAdapter(engine: engine)
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await engine.start(automaticallySync: false)
+    let adapter = await CloudKitSyncAdapter(engine: engine)
 
     await #expect(throws: TursoCKSyncError.self) {
       try await adapter.applyRemoteChanges([
@@ -787,20 +801,21 @@ struct TursoCKSyncTests {
     }
   }
 
-  @Test func wipePreservingDataReenqueues() throws {
-    let (url, conn) = try makeConnection()
+  @Test func wipePreservingDataReenqueues() async throws {
+    let (url, conn) = try await makeConnection()
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { conn.close() }
+    defer { await conn.close() }
 
-    let engine = try TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
-    try engine.start(automaticallySync: false)
-    try engine.performLocalWrite {
-      try conn.execute(
+    let engine = try await TursoCKSyncEngine(connection: conn, configuration: syncConfiguration)
+    try await engine.start(automaticallySync: false)
+    try await engine.performLocalWrite {
+      try await conn.execute(
         "INSERT INTO notes (id, title, body, updatedAt) VALUES ('1','t','b','2026-01-01T00:00:00Z')"
       )
     }
-    try engine.wipeAndRebootstrap(preserveLocalUserData: true)
-    #expect(try conn.query("SELECT * FROM notes").count == 1)
-    #expect(!engine.pendingRecordZoneChanges.isEmpty)
+    try await engine.wipeAndRebootstrap(preserveLocalUserData: true)
+    #expect(try await conn.query("SELECT * FROM notes").count == 1)
+    let pending = await engine.pendingRecordZoneChanges
+    #expect(!pending.isEmpty)
   }
 }

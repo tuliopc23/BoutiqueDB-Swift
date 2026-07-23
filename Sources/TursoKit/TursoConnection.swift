@@ -13,92 +13,98 @@ public enum CDCCaptureMode: String, Sendable {
 ///
 /// - Important: Do not enable `journal_mode=mvcc` on a connection that also
 ///   enables CDC (`PRAGMA capture_data_changes_conn`). They are mutually exclusive.
-public final class TursoConnection: @unchecked Sendable {
+public final actor TursoConnection {
   /// Retains the native database owner for as long as this connection is open.
   /// The database keeps only weak registrations of its child connections, so
   /// this does not form a retain cycle.
   public private(set) var database: TursoDatabase?
   let handle: OpaquePointer
-  private let asyncIO: Bool
-  private let lock = NSRecursiveLock()
+  nonisolated let asyncIO: Bool
   private var closed = false
   private var lastChanges: Int = 0
+
+  /// Serializes read/write transactions so that actor re-entrancy cannot
+  /// interleave two `BEGIN`/`COMMIT` blocks on the same handle.
+  private var transactionLocked = false
+  private var transactionWaiters: [UnsafeContinuation<Void, Never>] = []
 
   private var synchronizationDepth = 0
 
   public var isApplyingRemoteChanges: Bool {
-    withLockUnchecked { synchronizationDepth > 0 }
+    synchronizationDepth > 0
   }
 
   public var isSynchronizing: Bool {
     get { isApplyingRemoteChanges }
-    set { withLockUnchecked { synchronizationDepth = newValue ? max(synchronizationDepth, 1) : 0 } }
+    set { synchronizationDepth = newValue ? max(synchronizationDepth, 1) : 0 }
   }
 
-  public func withSynchronizingFlag<T>(_ body: () throws -> T) rethrows -> T {
-    lock.lock()
-    synchronizationDepth += 1
-    lock.unlock()
-    defer {
-      lock.lock()
-      synchronizationDepth = max(0, synchronizationDepth - 1)
-      lock.unlock()
+  private func lockTransaction() async {
+    if !transactionLocked {
+      transactionLocked = true
+      return
     }
-    return try body()
+    await withUnsafeContinuation { continuation in
+      transactionWaiters.append(continuation)
+    }
+  }
+
+  private func unlockTransaction() {
+    if let next = transactionWaiters.first {
+      transactionWaiters.removeFirst()
+      next.resume()
+    } else {
+      transactionLocked = false
+    }
+  }
+
+  public func withSynchronizingFlag<T>(_ body: () async throws -> T) async rethrows -> T {
+    synchronizationDepth += 1
+    defer { synchronizationDepth = max(0, synchronizationDepth - 1) }
+    return try await body()
   }
 
   /// Whether this connection was opened with sdk-kit `async_io` (cooperative IO).
-  public var usesAsyncIO: Bool { asyncIO }
+  public nonisolated var usesAsyncIO: Bool { asyncIO }
 
-  init(database: TursoDatabase, handle: OpaquePointer, asyncIO: Bool) {
+  init(database: TursoDatabase, handle: consuming OpaquePointer, asyncIO: Bool) {
     self.database = database
     self.handle = handle
     self.asyncIO = asyncIO
   }
 
-  private func withLockUnchecked<T>(_ body: () -> T) -> T {
-    lock.lock()
-    defer { lock.unlock() }
-    return body()
-  }
-
-  deinit {
-    close()
-  }
-
   public func close() {
-    lock.lock()
-    defer { lock.unlock() }
     guard !closed else { return }
     closed = true
-    let owningDatabase = database
-    owningDatabase?.unregister(self)
+    database = nil
     var err: UnsafePointer<CChar>?
     _ = turso_connection_close(handle, &err)
     turso_connection_deinit(handle)
-    database = nil
   }
 
   // MARK: - Execute / Query
 
   public func execute(_ sql: String, _ bindings: [TursoValue] = []) throws {
-    try withLock {
-      try executeUnlocked(sql, bindings)
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
     }
+    try executeUnlocked(sql, bindings)
   }
 
   @discardableResult
   public func executeUpdate(_ sql: String, _ bindings: [TursoValue] = []) throws -> Int {
-    try withLock {
-      try executeUnlocked(sql, bindings)
-      return lastChanges
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
     }
+    try executeUnlocked(sql, bindings)
+    return lastChanges
   }
 
   public func query(_ sql: String, _ bindings: [TursoValue] = []) throws -> [[String: TursoValue]] {
-    try withLock {
-      try queryUnlocked(sql, bindings)
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
     }
+    return try queryUnlocked(sql, bindings)
   }
 
   public func queryOne(_ sql: String, _ bindings: [TursoValue] = []) throws -> [String: TursoValue]?
@@ -107,20 +113,22 @@ public final class TursoConnection: @unchecked Sendable {
   }
 
   public func prepare(_ sql: String) throws -> TursoStatement {
-    try withLock {
-      try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
     }
+    return try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
   }
 
   public func withPreparedStatement<T>(
     _ sql: String,
-    _ body: (TursoStatement) throws -> T
-  ) throws -> T {
-    try withLock {
-      let statement = try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
-      defer { statement.finalize() }
-      return try body(statement)
+    _ body: (TursoStatement) throws -> sending T
+  ) throws -> sending T {
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
     }
+    let statement = try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
+    defer { statement.finalize() }
+    return try body(statement)
   }
 
   public func lastInsertRowID() -> Int64 {
@@ -130,57 +138,60 @@ public final class TursoConnection: @unchecked Sendable {
   // MARK: - Transactions
 
   public func write<T>(_ body: () throws -> T) throws -> T {
-    try withLock {
-      try executeUnlocked("BEGIN IMMEDIATE")
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
+    }
+    try executeUnlocked("BEGIN IMMEDIATE")
+    do {
+      let value = try body()
+      try executeUnlocked("COMMIT")
+      return value
+    } catch {
       do {
-        let value = try body()
-        try executeUnlocked("COMMIT")
-        return value
-      } catch {
-        do {
-          try executeUnlocked("ROLLBACK")
-        } catch let rollbackError {
-          throw transactionFailure(operation: error, rollback: rollbackError)
-        }
-        throw error
+        try executeUnlocked("ROLLBACK")
+      } catch let rollbackError {
+        throw transactionFailure(operation: error, rollback: rollbackError)
       }
+      throw error
     }
   }
 
   public func read<T>(_ body: () throws -> T) throws -> T {
-    try withLock {
-      try executeUnlocked("BEGIN")
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
+    }
+    try executeUnlocked("BEGIN")
+    do {
+      let value = try body()
+      try executeUnlocked("COMMIT")
+      return value
+    } catch {
       do {
-        let value = try body()
-        try executeUnlocked("COMMIT")
-        return value
-      } catch {
-        do {
-          try executeUnlocked("ROLLBACK")
-        } catch let rollbackError {
-          throw transactionFailure(operation: error, rollback: rollbackError)
-        }
-        throw error
+        try executeUnlocked("ROLLBACK")
+      } catch let rollbackError {
+        throw transactionFailure(operation: error, rollback: rollbackError)
       }
+      throw error
     }
   }
 
   /// MVCC concurrent transaction (`BEGIN CONCURRENT`).
   public func writeConcurrent<T>(_ body: () throws -> T) throws -> T {
-    try withLock {
-      try executeUnlocked("BEGIN CONCURRENT")
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
+    }
+    try executeUnlocked("BEGIN CONCURRENT")
+    do {
+      let value = try body()
+      try executeUnlocked("COMMIT")
+      return value
+    } catch {
       do {
-        let value = try body()
-        try executeUnlocked("COMMIT")
-        return value
-      } catch {
-        do {
-          try executeUnlocked("ROLLBACK")
-        } catch let rollbackError {
-          throw transactionFailure(operation: error, rollback: rollbackError)
-        }
-        throw error
+        try executeUnlocked("ROLLBACK")
+      } catch let rollbackError {
+        throw transactionFailure(operation: error, rollback: rollbackError)
       }
+      throw error
     }
   }
 
@@ -234,15 +245,6 @@ public final class TursoConnection: @unchecked Sendable {
 
   // MARK: - Internals
 
-  func withLock<T>(_ body: () throws -> T) throws -> T {
-    lock.lock()
-    defer { lock.unlock() }
-    guard !closed else {
-      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
-    }
-    return try body()
-  }
-
   func executeUnlocked(_ sql: String, _ bindings: [TursoValue] = []) throws {
     let statement = try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
     defer { statement.finalize() }
@@ -267,94 +269,108 @@ public final class TursoConnection: @unchecked Sendable {
 
   /// Async execute: drives ``TURSO_IO`` with `await Task.yield()` between IO ticks.
   package func executeAsync(_ sql: String, _ bindings: [TursoValue] = []) async throws {
-    try await withLockAsync {
-      try await executeUnlockedAsync(sql, bindings)
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
     }
+    try await executeUnlockedAsync(sql, bindings)
   }
 
   package func queryAsync(
     _ sql: String,
     _ bindings: [TursoValue] = []
   ) async throws -> [[String: TursoValue]] {
-    try await withLockAsync {
-      try await queryUnlockedAsync(sql, bindings)
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
     }
+    return try await queryUnlockedAsync(sql, bindings)
   }
 
   package func writeAsync<T: Sendable>(
     _ body: @Sendable () async throws -> T
   ) async throws -> T {
-    try await withLockAsync {
-      try await executeUnlockedAsync("BEGIN IMMEDIATE")
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
+    }
+    await lockTransaction()
+    defer { unlockTransaction() }
+    try executeUnlocked("BEGIN IMMEDIATE")
+    do {
+      let value = try await body()
+      try executeUnlocked("COMMIT")
+      return value
+    } catch {
       do {
-        let value = try await body()
-        try await executeUnlockedAsync("COMMIT")
-        return value
-      } catch {
-        do {
-          try await executeUnlockedAsync("ROLLBACK")
-        } catch let rollbackError {
-          throw transactionFailure(operation: error, rollback: rollbackError)
-        }
-        throw error
+        try executeUnlocked("ROLLBACK")
+      } catch let rollbackError {
+        throw transactionFailure(operation: error, rollback: rollbackError)
       }
+      throw error
     }
   }
 
   package func readAsync<T: Sendable>(
     _ body: @Sendable () async throws -> T
   ) async throws -> T {
-    try await withLockAsync {
-      try await executeUnlockedAsync("BEGIN")
+    guard !closed else {
+      throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
+    }
+    await lockTransaction()
+    defer { unlockTransaction() }
+    try executeUnlocked("BEGIN")
+    do {
+      let value = try await body()
+      try executeUnlocked("COMMIT")
+      return value
+    } catch {
       do {
-        let value = try await body()
-        try await executeUnlockedAsync("COMMIT")
-        return value
-      } catch {
-        do {
-          try await executeUnlockedAsync("ROLLBACK")
-        } catch let rollbackError {
-          throw transactionFailure(operation: error, rollback: rollbackError)
-        }
-        throw error
+        try executeUnlocked("ROLLBACK")
+      } catch let rollbackError {
+        throw transactionFailure(operation: error, rollback: rollbackError)
       }
+      throw error
     }
   }
 
   package func writeConcurrentAsync<T: Sendable>(
     _ body: @Sendable () async throws -> T
   ) async throws -> T {
-    try await withLockAsync {
-      try await executeUnlockedAsync("BEGIN CONCURRENT")
-      do {
-        let value = try await body()
-        try await executeUnlockedAsync("COMMIT")
-        return value
-      } catch {
-        do {
-          try await executeUnlockedAsync("ROLLBACK")
-        } catch let rollbackError {
-          throw transactionFailure(operation: error, rollback: rollbackError)
-        }
-        throw error
-      }
-    }
-  }
-
-  private func withLockAsync<T>(_ body: () async throws -> T) async throws -> T {
-    // NSLock is not async-safe; callers (DatabaseActor) provide exclusivity.
-    // Use a nonisolated snapshot of `closed` without lock (actor serializes BoutiqueDB path).
     guard !closed else {
       throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Connection is closed")
     }
-    return try await body()
+    await lockTransaction()
+    defer { unlockTransaction() }
+    try executeUnlocked("BEGIN CONCURRENT")
+    do {
+      let value = try await body()
+      try executeUnlocked("COMMIT")
+      return value
+    } catch {
+      do {
+        try executeUnlocked("ROLLBACK")
+      } catch let rollbackError {
+        throw transactionFailure(operation: error, rollback: rollbackError)
+      }
+      throw error
+    }
   }
 
   func executeUnlockedAsync(_ sql: String, _ bindings: [TursoValue] = []) async throws {
     let statement = try TursoStatement(connection: handle, sql: sql, asyncIO: asyncIO)
     defer { statement.finalize() }
     try statement.bind(bindings)
-    while try await statement.stepAsync() {}
+    loop: while true {
+      switch try statement.stepOnce() {
+      case .row:
+        continue
+      case .done:
+        break loop
+      case .needsIO:
+        try statement.runIOOnce()
+        await Task.yield()
+      case .busy:
+        throw TursoError.busy
+      }
+    }
     lastChanges = statement.changeCount
   }
 
@@ -366,10 +382,19 @@ public final class TursoConnection: @unchecked Sendable {
     defer { statement.finalize() }
     try statement.bind(bindings)
     var rows: [[String: TursoValue]] = []
-    while try await statement.stepAsync() {
-      rows.append(statement.namedRow())
+    while true {
+      switch try statement.stepOnce() {
+      case .row:
+        rows.append(statement.namedRow())
+      case .done:
+        return rows
+      case .needsIO:
+        try statement.runIOOnce()
+        await Task.yield()
+      case .busy:
+        throw TursoError.busy
+      }
     }
-    return rows
   }
 
   private func transactionFailure(operation: Error, rollback: Error) -> TursoError {

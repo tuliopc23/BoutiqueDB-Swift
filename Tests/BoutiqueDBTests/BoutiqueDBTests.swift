@@ -19,7 +19,7 @@ struct BoutiqueDBTests {
   private func makeDBWithSchema(startListening: Bool = false) async throws -> BoutiqueDB {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("boutique-\(UUID().uuidString).db")
-    let db = try BoutiqueDB(url: url, startListening: startListening)
+    let db = try await BoutiqueDB(url: url, startListening: startListening)
     try await db.execute(
       """
       CREATE TABLE notes (
@@ -49,12 +49,12 @@ struct BoutiqueDBTests {
   @Test func asyncReadWriteRoundTrip() async throws {
     let db = try await makeDBWithSchema()
     defer {
-      db.close()
+      await db.close()
       try? FileManager.default.removeItem(at: db.url)
     }
 
     try await db.write { conn in
-      try Note.insert { Note(id: "n1", title: "Hello", body: "World") }.execute(conn.connection)
+      try await Note.insert { Note(id: "n1", title: "Hello", body: "World") }.execute(conn.connection)
     }
 
     let all = try await db.fetchAll(Note.self)
@@ -67,7 +67,7 @@ struct BoutiqueDBTests {
   @Test func writeEmitsChangeEvent() async throws {
     let db = try await makeDBWithSchema()
     defer {
-      db.close()
+      await db.close()
       try? FileManager.default.removeItem(at: db.url)
     }
 
@@ -75,7 +75,7 @@ struct BoutiqueDBTests {
     var iterator = stream.makeAsyncIterator()
 
     try await db.write { conn in
-      try Note.insert { Note(id: "evt", title: "E", body: "B") }.execute(conn.connection)
+      try await Note.insert { Note(id: "evt", title: "E", body: "B") }.execute(conn.connection)
     }
 
     let event = await iterator.next()
@@ -89,7 +89,7 @@ struct BoutiqueDBTests {
   @Test func liveQueryAutoRefreshes() async throws {
     let db = try await makeDBWithSchema()
     defer {
-      db.close()
+      await db.close()
       try? FileManager.default.removeItem(at: db.url)
     }
 
@@ -99,7 +99,7 @@ struct BoutiqueDBTests {
     }
 
     try await db.write { conn in
-      try Note.insert { Note(id: "n2", title: "A", body: "B") }.execute(conn.connection)
+      try await Note.insert { Note(id: "n2", title: "A", body: "B") }.execute(conn.connection)
     }
 
     let updated = await waitFor(timeout: .milliseconds(500)) {
@@ -112,12 +112,12 @@ struct BoutiqueDBTests {
   @Test func liveQueryOneAutoRefreshes() async throws {
     let db = try await makeDBWithSchema()
     defer {
-      db.close()
+      await db.close()
       try? FileManager.default.removeItem(at: db.url)
     }
 
     try await db.write { conn in
-      try Note.insert { Note(id: "n3", title: "One", body: "1") }.execute(conn.connection)
+      try await Note.insert { Note(id: "n3", title: "One", body: "1") }.execute(conn.connection)
     }
 
     let query = LiveQueryOne(db) { Note.where { $0.id.eq("n3") }.asSelect() }
@@ -128,7 +128,7 @@ struct BoutiqueDBTests {
     #expect(query.wrappedValue?.title == "One")
 
     try await db.write { conn in
-      try Note.where { $0.id.eq("n3") }.update { $0.title = "Two" }.execute(conn.connection)
+      try await Note.where { $0.id.eq("n3") }.update { $0.title = "Two" }.execute(conn.connection)
     }
 
     let refreshed = await waitFor(timeout: .milliseconds(500)) {
@@ -140,7 +140,7 @@ struct BoutiqueDBTests {
   @Test func twoLiveQueriesBothRefresh() async throws {
     let db = try await makeDBWithSchema()
     defer {
-      db.close()
+      await db.close()
       try? FileManager.default.removeItem(at: db.url)
     }
 
@@ -148,7 +148,7 @@ struct BoutiqueDBTests {
     let b = LiveQuery(db) { Note.all.asSelect() }
 
     try await db.write { conn in
-      try Note.insert { Note(id: "dual", title: "D", body: "B") }.execute(conn.connection)
+      try await Note.insert { Note(id: "dual", title: "D", body: "B") }.execute(conn.connection)
     }
 
     let both = await waitFor(timeout: .milliseconds(500)) {
@@ -160,18 +160,18 @@ struct BoutiqueDBTests {
   @Test func forceRefreshWorks() async throws {
     let db = try await makeDBWithSchema()
     defer {
-      db.close()
+      await db.close()
       try? FileManager.default.removeItem(at: db.url)
     }
 
     let query = LiveQuery(db) { Note.all.asSelect() }
     _ = await waitFor { !query.isLoading }
 
-    try db.unsafeConnection.execute(
+    try await db.unsafeConnection.execute(
       "INSERT INTO notes (id, title, body) VALUES (?, ?, ?)",
       [.text("force"), .text("F"), .text("B")]
     )
-    db.store.advanceFromCDC()
+    await db.store.advanceFromCDC()
     await query.load()
     #expect(query.wrappedValue.map(\.id) == ["force"])
   }
@@ -179,15 +179,15 @@ struct BoutiqueDBTests {
   @Test func concurrentWritesSerialize() async throws {
     let db = try await makeDBWithSchema()
     defer {
-      db.close()
+      await db.close()
       try? FileManager.default.removeItem(at: db.url)
     }
 
     async let w1: Void = db.write { conn in
-      try Note.insert { Note(id: "c1", title: "1", body: "a") }.execute(conn.connection)
+      try await Note.insert { Note(id: "c1", title: "1", body: "a") }.execute(conn.connection)
     }
     async let w2: Void = db.write { conn in
-      try Note.insert { Note(id: "c2", title: "2", body: "b") }.execute(conn.connection)
+      try await Note.insert { Note(id: "c2", title: "2", body: "b") }.execute(conn.connection)
     }
     _ = try await (w1, w2)
 
@@ -195,13 +195,13 @@ struct BoutiqueDBTests {
     #expect(Set(all.map(\.id)) == Set(["c1", "c2"]))
   }
 
-  @Test func cdcAndMVCCAreMutuallyExclusive() throws {
+  @Test func cdcAndMVCCAreMutuallyExclusive() async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("boutique-mvcc-\(UUID().uuidString).db")
     defer { try? FileManager.default.removeItem(at: url) }
 
-    #expect(throws: BoutiqueError.cdcMutuallyExclusiveWithMVCC) {
-      _ = try BoutiqueDB(url: url, enableCDC: true, enableMVCC: true)
+    await #expect(throws: BoutiqueError.cdcMutuallyExclusiveWithMVCC) {
+      _ = try await BoutiqueDB(url: url, enableCDC: true, enableMVCC: true)
     }
   }
 
@@ -226,7 +226,7 @@ struct BoutiqueDBTests {
   @Test func postCommitObserversDoNotClobberAndFailuresAreVisible() async throws {
     let db = try await makeDBWithSchema()
     defer {
-      db.close()
+      await db.close()
       try? FileManager.default.removeItem(at: db.url)
     }
     var calls = 0

@@ -21,42 +21,41 @@ private let logger = Logger(subsystem: "TursoCKSync", category: "engine")
 /// // after local writes:
 /// try engine.drainCDC()
 /// ```
-public final class TursoCKSyncEngine: @unchecked Sendable {
-  public let connection: TursoConnection
-  public let configuration: TursoCKSyncConfiguration
-  public let metadata: SyncMetadataStore
+public final actor TursoCKSyncEngine {
+  nonisolated public let connection: TursoConnection
+  nonisolated public let configuration: TursoCKSyncConfiguration
+  nonisolated public let metadata: SyncMetadataStore
 
   /// Optional sink for ``SyncStatus`` (wired by ``CloudKitSyncAdapter``).
   public var statusSink: (@Sendable (SyncStatus) -> Void)? {
-    get {
-      lock.lock()
-      defer { lock.unlock() }
-      return _statusSink
-    }
-    set {
-      lock.lock()
-      _statusSink = newValue
-      lock.unlock()
-    }
+    get { _statusSink }
+    set { _statusSink = newValue }
+  }
+
+  /// Set the status sink from another actor without exposing the property setter.
+  public func setStatusSink(_ sink: (@Sendable (SyncStatus) -> Void)?) {
+    _statusSink = sink
+  }
+
+  /// Set the injected account status from another actor.
+  public func setInjectedAccountStatus(_ status: CKAccountStatus?) {
+    injectedAccountStatus = status
   }
 
   private var container: CKContainer?
   private var syncEngine: CKSyncEngine?
   /// In-process pending queue used when `enablesCloudKit == false`.
   private var localPendingRecordZoneChanges: [CKSyncEngine.PendingRecordZoneChange] = []
-  private let lock = NSLock()
   private var _statusSink: (@Sendable (SyncStatus) -> Void)?
   private var zoneBootstrapped = false
   private var stopped = false
 
-  public var zoneID: CKRecordZone.ID {
+  nonisolated public var zoneID: CKRecordZone.ID {
     CKRecordZone.ID(zoneName: configuration.zoneName, ownerName: CKCurrentUserDefaultName)
   }
 
   /// Pending record changes waiting to sync (CloudKit engine state or local queue).
   public var pendingRecordZoneChanges: [CKSyncEngine.PendingRecordZoneChange] {
-    lock.lock()
-    defer { lock.unlock() }
     if let syncEngine {
       return syncEngine.state.pendingRecordZoneChanges
     }
@@ -67,7 +66,7 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
     connection: TursoConnection,
     configuration: TursoCKSyncConfiguration,
     container: CKContainer? = nil
-  ) throws {
+  ) async throws {
     try configuration.validate(hasInjectedContainer: container != nil)
     self.connection = connection
     self.configuration = configuration
@@ -79,36 +78,36 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
         self.container = CKContainer(identifier: id)
       }
     }
-    try metadata.migrate()
-    try validateDatabaseSchema()
-    try metadata.validateAndSaveSchema(configuration.syncedTables)
-    try connection.enableCaptureDataChanges(mode: .full)
+    try await metadata.migrate()
+    try await validateDatabaseSchema()
+    try await metadata.validateAndSaveSchema(configuration.syncedTables)
+    try await connection.enableCaptureDataChanges(mode: .full)
   }
 
   /// Creates `CKSyncEngine` with persisted `stateSerialization` and ensures the custom zone is pending.
-  public func start(automaticallySync: Bool = true) throws {
+  public func start(automaticallySync: Bool = true) async throws {
     stopped = false
     guard configuration.enablesCloudKit else {
-      try restorePendingChanges()
+      try await restorePendingChanges()
       logger.log("CloudKit disabled — using in-process pending queue")
       publishStatus(.idle)
       return
     }
-    lock.lock()
+    
     guard syncEngine == nil else {
-      lock.unlock()
+      
       return
     }
     guard let container else {
-      lock.unlock()
+      
       throw TursoError(code: -1, message: "Missing CKContainer")
     }
 
     let state: CKSyncEngine.State.Serialization?
     do {
-      state = try metadata.loadStateSerialization()
+      state = try await metadata.loadStateSerialization()
     } catch {
-      lock.unlock()
+      
       throw error
     }
     var config = CKSyncEngine.Configuration(
@@ -119,36 +118,36 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
     config.automaticallySync = automaticallySync
     let engine = CKSyncEngine(config)
     self.syncEngine = engine
-    lock.unlock()
+    
 
     if state == nil {
       engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
       zoneBootstrapped = true
     }
-    try restorePendingChanges()
+    try await restorePendingChanges()
     logger.log("CKSyncEngine started (hasState=\(state != nil, privacy: .public))")
     publishStatus(.idle)
   }
 
   /// Tears down the CloudKit engine (local pending queue is retained for tests).
   public func stop() {
-    lock.lock()
+    
     syncEngine = nil
     stopped = true
-    lock.unlock()
+    
     publishStatus(.idle)
   }
 
   /// Persist / compare account identity hash for crash-safe rebootstrap (BD-007).
   ///
   /// Call with a stable hash of the signed-in Apple ID (e.g. `userRecordID.recordName`).
-  public func noteAccountIdentity(_ accountHash: String?) throws {
-    let previous = try metadata.loadAccountHash()
+  public func noteAccountIdentity(_ accountHash: String?) async throws {
+    let previous = try await metadata.loadAccountHash()
     if let previous, let accountHash, previous != accountHash {
       publishStatus(.accountChanged)
-      try wipeAndRebootstrap(preserveLocalUserData: true)
+      try await wipeAndRebootstrap(preserveLocalUserData: true)
     }
-    try metadata.saveAccountHash(accountHash)
+    try await metadata.saveAccountHash(accountHash)
   }
 
   /// Optional synchronous account status for tests / custom UI (inject before start).
@@ -162,17 +161,17 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
   /// account-change notifications.
   public func detectAccountIdentityChangeIfNeeded() async throws {
     guard configuration.enablesCloudKit else { return }
-    _ = try metadata.loadAccountHash()
+    _ = try await metadata.loadAccountHash()
     if let injectedAccountStatus {
-      try applyAccountStatus(injectedAccountStatus)
+      try await applyAccountStatus(injectedAccountStatus)
       return
     }
     guard let container else { return }
-    try applyAccountStatus(await container.accountStatus())
+    try await applyAccountStatus(await container.accountStatus())
   }
 
   /// Applies a known ``CKAccountStatus`` (tests and custom UI flows).
-  public func applyAccountStatus(_ status: CKAccountStatus) throws {
+  public func applyAccountStatus(_ status: CKAccountStatus) async throws {
     switch status {
     case .available:
       break
@@ -181,12 +180,12 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
     @unknown default:
       publishStatus(.needsAuthentication)
     }
-    _ = try metadata.loadAccountHash()
+    _ = try await metadata.loadAccountHash()
   }
 
-  public func requireEngine() throws -> CKSyncEngine {
-    lock.lock()
-    defer { lock.unlock() }
+  public func requireEngine() async throws -> CKSyncEngine {
+    
+
     guard let syncEngine else {
       throw TursoError(code: -1, message: "Call start() before using the sync engine")
     }
@@ -200,13 +199,13 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
   /// - Parameter limit: Max CDC rows per call (defaults to ``TursoCKSyncConfiguration/drainCDCLimit``, 500).
   ///   CloudKit send path further batches to ``TursoCKSyncConfiguration/maxBatchSize`` (≤ 250).
   @discardableResult
-  public func drainCDC(limit: Int? = nil) throws -> Int {
-    if connection.isApplyingRemoteChanges { return 0 }
+  public func drainCDC(limit: Int? = nil) async throws -> Int {
+    if await connection.isApplyingRemoteChanges { return 0 }
     if stopped { return 0 }
 
     let effectiveLimit = limit ?? configuration.drainCDCLimit
-    let cursor = try metadata.loadCDCCursor()
-    let changes = try connection.cdcChanges(after: cursor, limit: effectiveLimit)
+    let cursor = try await metadata.loadCDCCursor()
+    let changes = try await connection.cdcChanges(after: cursor, limit: effectiveLimit)
     guard !changes.isEmpty else { return 0 }
 
     var durable: [DurablePendingChange] = []
@@ -218,11 +217,11 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
         let table = configuration.table(named: change.tableName)
       else { continue }
 
-      durable.append(try durablePendingChange(for: change, table: table))
+      durable.append(try await durablePendingChange(for: change, table: table))
     }
 
     durable = coalescing(durable)
-    try metadata.stagePendingChanges(durable, through: lastID)
+    try await metadata.stagePendingChanges(durable, through: lastID)
     enqueueDurableChanges(durable)
     logger.debug(
       "Drained \(durable.count, privacy: .public) pending changes (cursor=\(lastID, privacy: .public))"
@@ -231,8 +230,8 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
   }
 
   private func enqueuePending(_ pending: [CKSyncEngine.PendingRecordZoneChange]) {
-    lock.lock()
-    defer { lock.unlock() }
+    
+
     for change in pending {
       let recordID: CKRecord.ID
       switch change {
@@ -260,8 +259,8 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
   private func durablePendingChange(
     for change: CDCChange,
     table: SyncedTable
-  ) throws -> DurablePendingChange {
-    guard let rowPK = try resolveRowPK(table: table, change: change), !rowPK.isEmpty else {
+  ) async throws -> DurablePendingChange {
+    guard let rowPK = try await resolveRowPK(table: table, change: change), !rowPK.isEmpty else {
       throw TursoCKSyncError.unresolvedPrimaryKey(table: table.name, changeID: change.changeID)
     }
     return DurablePendingChange(
@@ -296,28 +295,28 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
     )
   }
 
-  private func restorePendingChanges() throws {
-    enqueueDurableChanges(try metadata.loadPendingChanges())
+  private func restorePendingChanges() async throws {
+    enqueueDurableChanges(try await metadata.loadPendingChanges())
   }
 
-  private func preserveClientRecord(serverRecord: CKRecord) throws {
+  private func preserveClientRecord(serverRecord: CKRecord) async throws {
     guard let parsed = RecordIdentity.parse(serverRecord.recordID.recordName),
       let table = configuration.table(named: parsed.table),
-      try makeRecord(for: serverRecord.recordID) != nil
+      try await makeRecord(for: serverRecord.recordID) != nil
     else {
       throw TursoCKSyncError.unresolvedPrimaryKey(
         table: RecordIdentity.parse(serverRecord.recordID.recordName)?.table ?? "unknown",
-        changeID: try metadata.loadCDCCursor()
+        changeID: try await metadata.loadCDCCursor()
       )
     }
-    try metadata.upsertRecordMeta(
+    try await metadata.upsertRecordMeta(
       table: table.name,
       rowPK: parsed.rowPK,
       recordName: serverRecord.recordID.recordName,
       zoneName: serverRecord.recordID.zoneID.zoneName,
       systemFields: RecordMapper.encodeSystemFields(serverRecord)
     )
-    let cursor = try metadata.loadCDCCursor()
+    let cursor = try await metadata.loadCDCCursor()
     let durable = DurablePendingChange(
       recordName: serverRecord.recordID.recordName,
       tableName: table.name,
@@ -326,13 +325,13 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
       operation: .save,
       changeID: cursor
     )
-    try metadata.stagePendingChanges([durable], through: cursor)
+    try await metadata.stagePendingChanges([durable], through: cursor)
     enqueueDurableChanges([durable])
   }
 
-  private func validateDatabaseSchema() throws {
+  private func validateDatabaseSchema() async throws {
     for table in configuration.syncedTables {
-      let columns = try connection.query("PRAGMA table_info(\(RowSQL.quoteIdent(table.name)))")
+      let columns = try await connection.query("PRAGMA table_info(\(RowSQL.quoteIdent(table.name)))")
       guard !columns.isEmpty else {
         throw TursoCKSyncError.tableNotFound(table.name)
       }
@@ -368,7 +367,7 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
       }
 
       let createSQL =
-        try connection.queryOne(
+        try await connection.queryOne(
           "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
           [.text(table.name)]
         )?["sql"]?.stringValue?.uppercased() ?? ""
@@ -376,7 +375,7 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
         throw TursoCKSyncError.autoIncrementPrimaryKeyUnsupported(table: table.name)
       }
 
-      let indexes = try connection.query("PRAGMA index_list(\(RowSQL.quoteIdent(table.name)))")
+      let indexes = try await connection.query("PRAGMA index_list(\(RowSQL.quoteIdent(table.name)))")
       for index in indexes
       where index["unique"]?.int64Value == 1
         && index["origin"]?.stringValue != "pk"
@@ -391,21 +390,21 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
 
   /// Convenience: local write that then drains CDC.
   @discardableResult
-  public func performLocalWrite(_ body: () throws -> Void) throws -> Int {
-    try connection.write(body)
-    return try drainCDC()
+  public func performLocalWrite(_ body: @Sendable () async throws -> Void) async throws -> Int {
+    try await connection.writeAsync { @Sendable in try await body() }
+    return try await drainCDC()
   }
 
   // MARK: - Testing helpers (no network)
 
   /// Builds a `CKRecord` for the current local row (used by tests / recordProvider).
-  public func makeRecord(for recordID: CKRecord.ID) throws -> CKRecord? {
+  public func makeRecord(for recordID: CKRecord.ID) async throws -> CKRecord? {
     guard let parsed = RecordIdentity.parse(recordID.recordName),
       let table = configuration.table(named: parsed.table),
-      let row = try RowSQL.fetchRow(connection: connection, table: table, rowPK: parsed.rowPK)
+      let row = try await RowSQL.fetchRow(connection: connection, table: table, rowPK: parsed.rowPK)
     else { return nil }
 
-    let systemFields = try metadata.systemFields(table: table.name, rowPK: parsed.rowPK)
+    let systemFields = try await metadata.systemFields(table: table.name, rowPK: parsed.rowPK)
     return try RecordMapper.makeRecord(
       table: table,
       rowPK: parsed.rowPK,
@@ -416,17 +415,17 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
   }
 
   /// Applies a remote record as if delivered by `fetchedRecordZoneChanges`.
-  public func applyRemoteRecord(_ record: CKRecord) throws {
-    try applyModification(record)
+  public func applyRemoteRecord(_ record: CKRecord) async throws {
+    try await applyModification(record)
   }
 
-  public func applyRemoteDeletion(recordID: CKRecord.ID) throws {
-    try applyDeletion(recordID)
+  public func applyRemoteDeletion(recordID: CKRecord.ID) async throws {
+    try await applyDeletion(recordID)
   }
 
   // MARK: - Inbound
 
-  private func applyModification(_ record: CKRecord) throws {
+  private func applyModification(_ record: CKRecord) async throws {
     guard
       let table = configuration.table(forRecordType: record.recordType)
         ?? configuration.table(named: RecordIdentity.parse(record.recordID.recordName)?.table ?? "")
@@ -444,12 +443,12 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
 
     let row = try RecordMapper.rowDictionary(from: record, table: table)
     let systemFields = RecordMapper.encodeSystemFields(record)
-    let cursorBefore = try metadata.loadCDCCursor()
+    let cursorBefore = try await metadata.loadCDCCursor()
 
-    let durable = try connection.withSynchronizingFlag {
-      try connection.write {
-        try RowSQL.upsert(connection: connection, table: table, row: row)
-        try metadata.upsertRecordMeta(
+    let durable = try await connection.withSynchronizingFlag { @Sendable in
+      try await connection.writeAsync { @Sendable in
+        try await RowSQL.upsert(connection: connection, table: table, row: row)
+        try await metadata.upsertRecordMeta(
           table: table.name,
           rowPK: rowPK,
           recordName: record.recordID.recordName,
@@ -457,7 +456,7 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
           systemFields: systemFields
         )
         // Skip CDC rows produced by this inbound apply.
-        return try stageChangesPastEcho(
+        return try await self.stageChangesPastEcho(
           from: cursorBefore,
           echoTable: table,
           echoRowPK: rowPK
@@ -467,25 +466,25 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
     enqueueDurableChanges(durable)
   }
 
-  private func applyDeletion(_ recordID: CKRecord.ID) throws {
+  private func applyDeletion(_ recordID: CKRecord.ID) async throws {
     let resolved: (table: String, rowPK: String)?
     if let parsed = RecordIdentity.parse(recordID.recordName) {
       resolved = parsed
     } else {
-      resolved = try metadata.resolveRow(recordName: recordID.recordName)
+      resolved = try await metadata.resolveRow(recordName: recordID.recordName)
     }
 
     guard let resolved, let table = configuration.table(named: resolved.table) else {
-      try? metadata.deleteRecordMeta(recordName: recordID.recordName)
+      try? await metadata.deleteRecordMeta(recordName: recordID.recordName)
       return
     }
 
-    let cursorBefore = try metadata.loadCDCCursor()
-    let durable = try connection.withSynchronizingFlag {
-      try connection.write {
-        try RowSQL.delete(connection: connection, table: table, rowPK: resolved.rowPK)
-        try metadata.deleteRecordMeta(table: table.name, rowPK: resolved.rowPK)
-        return try stageChangesPastEcho(
+    let cursorBefore = try await metadata.loadCDCCursor()
+    let durable = try await connection.withSynchronizingFlag { @Sendable in
+      try await connection.writeAsync { @Sendable in
+        try await RowSQL.delete(connection: connection, table: table, rowPK: resolved.rowPK)
+        try await metadata.deleteRecordMeta(table: table.name, rowPK: resolved.rowPK)
+        return try await self.stageChangesPastEcho(
           from: cursorBefore,
           echoTable: table,
           echoRowPK: resolved.rowPK
@@ -499,13 +498,13 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
     from cursorBefore: Int64,
     echoTable: SyncedTable,
     echoRowPK: String
-  ) throws -> [DurablePendingChange] {
-    let changes = try connection.cdcChanges(after: cursorBefore, limit: 10_000)
+  ) async throws -> [DurablePendingChange] {
+    let changes = try await connection.cdcChanges(after: cursorBefore, limit: 10_000)
     guard let last = changes.last else { return [] }
 
     var echoChangeID: Int64?
     for change in changes where change.tableName == echoTable.name {
-      if try resolveRowPK(table: echoTable, change: change) == echoRowPK {
+      if try await resolveRowPK(table: echoTable, change: change) == echoRowPK {
         echoChangeID = change.changeID
       }
     }
@@ -513,10 +512,10 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
     var durable: [DurablePendingChange] = []
     for change in changes where change.changeID != echoChangeID {
       guard let table = configuration.table(named: change.tableName) else { continue }
-      durable.append(try durablePendingChange(for: change, table: table))
+      durable.append(try await durablePendingChange(for: change, table: table))
     }
     durable = coalescing(durable)
-    try metadata.stagePendingChangesInCurrentTransaction(durable, through: last.changeID)
+    try await metadata.stagePendingChangesInCurrentTransaction(durable, through: last.changeID)
     return durable
   }
 
@@ -526,15 +525,15 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
     failedRecord: CKRecord,
     serverRecord: CKRecord,
     engine: CKSyncEngine
-  ) throws {
+  ) async throws {
     switch configuration.conflictPolicy {
     case .serverWins:
-      try applyModification(serverRecord)
-      try discardPending(recordID: failedRecord.recordID, engine: engine)
+      try await applyModification(serverRecord)
+      try await discardPending(recordID: failedRecord.recordID, engine: engine)
     case .clientWins:
-      try preserveClientRecord(serverRecord: serverRecord)
+      try await preserveClientRecord(serverRecord: serverRecord)
     case .lastWriterWins(let field):
-      let local = try makeRecord(for: failedRecord.recordID)
+      let local = try await makeRecord(for: failedRecord.recordID)
       let localStamp = comparableStamp(local?[field])
       let serverStamp = comparableStamp(serverRecord[field])
       if let localStamp, let serverStamp, localStamp > serverStamp {
@@ -542,10 +541,10 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
           !parsed.table.isEmpty, !parsed.rowPK.isEmpty
         else {
           // Cannot safely record meta without identity — re-apply server to stay consistent.
-          try applyModification(serverRecord)
+          try await applyModification(serverRecord)
           return
         }
-        try metadata.upsertRecordMeta(
+        try await metadata.upsertRecordMeta(
           table: parsed.table,
           rowPK: parsed.rowPK,
           recordName: failedRecord.recordID.recordName,
@@ -554,13 +553,13 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
         )
         engine.state.add(pendingRecordZoneChanges: [.saveRecord(failedRecord.recordID)])
       } else {
-        try applyModification(serverRecord)
-        try discardPending(recordID: failedRecord.recordID, engine: engine)
+        try await applyModification(serverRecord)
+        try await discardPending(recordID: failedRecord.recordID, engine: engine)
       }
     }
   }
 
-  private func handleAccountChange(_ event: CKSyncEngine.Event.AccountChange) throws {
+  private func handleAccountChange(_ event: CKSyncEngine.Event.AccountChange) async throws {
     let shouldWipe: Bool
     let shouldReupload: Bool
     switch event.changeType {
@@ -578,14 +577,14 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
     if shouldWipe {
       // Preserve local rows on account change; only clear sync metadata (OpenSpec).
       publishStatus(.accountChanged)
-      try wipeAndRebootstrap(preserveLocalUserData: true)
+      try await wipeAndRebootstrap(preserveLocalUserData: true)
     }
 
     if shouldReupload && !shouldWipe {
-      if configuration.enablesCloudKit, let engine = try? requireEngine() {
+      if configuration.enablesCloudKit, let engine = try? await requireEngine() {
         engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
       }
-      try enqueueAllLocalRows()
+      try await enqueueAllLocalRows()
     }
   }
 
@@ -593,22 +592,22 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
   ///
   /// - Parameter preserveLocalUserData: When `true` (account change), keep app tables and
   ///   re-upload rows. When `false` (zone deleted), wipe synced tables too.
-  public func wipeAndRebootstrap(preserveLocalUserData: Bool = false) throws {
-    try connection.withSynchronizingFlag {
-      try connection.write {
+  public func wipeAndRebootstrap(preserveLocalUserData: Bool = false) async throws {
+    try await connection.withSynchronizingFlag { @Sendable in
+      try await connection.writeAsync { @Sendable in
         if !preserveLocalUserData {
-          try RowSQL.deleteAllSyncedData(connection: connection, tables: configuration.syncedTables)
+          try await RowSQL.deleteAllSyncedData(connection: connection, tables: configuration.syncedTables)
         }
-        try metadata.wipeAll()
+        try await metadata.wipeAll()
       }
     }
-    lock.lock()
+    
     syncEngine = nil
     localPendingRecordZoneChanges = []
-    lock.unlock()
-    try start()
+    
+    try await start()
     if preserveLocalUserData {
-      try enqueueAllLocalRows()
+      try await enqueueAllLocalRows()
     }
   }
 
@@ -631,20 +630,20 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
   public func resolveConflictForTesting(
     failedRecord: CKRecord,
     serverRecord: CKRecord
-  ) throws {
+  ) async throws {
     switch configuration.conflictPolicy {
     case .serverWins:
-      try applyModification(serverRecord)
-      try discardPending(recordID: failedRecord.recordID)
+      try await applyModification(serverRecord)
+      try await discardPending(recordID: failedRecord.recordID)
     case .clientWins:
-      try preserveClientRecord(serverRecord: serverRecord)
+      try await preserveClientRecord(serverRecord: serverRecord)
     case .lastWriterWins(let field):
-      let local = try makeRecord(for: failedRecord.recordID)
+      let local = try await makeRecord(for: failedRecord.recordID)
       let localStamp = comparableStamp(local?[field])
       let serverStamp = comparableStamp(serverRecord[field])
       if let localStamp, let serverStamp, localStamp > serverStamp {
         if let parsed = RecordIdentity.parse(failedRecord.recordID.recordName) {
-          try metadata.upsertRecordMeta(
+          try await metadata.upsertRecordMeta(
             table: parsed.table,
             rowPK: parsed.rowPK,
             recordName: failedRecord.recordID.recordName,
@@ -654,17 +653,17 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
         }
         enqueuePending([.saveRecord(failedRecord.recordID)])
       } else {
-        try applyModification(serverRecord)
-        try discardPending(recordID: failedRecord.recordID)
+        try await applyModification(serverRecord)
+        try await discardPending(recordID: failedRecord.recordID)
       }
     }
   }
 
-  private func enqueueAllLocalRows() throws {
-    let cursor = try metadata.loadCDCCursor()
+  private func enqueueAllLocalRows() async throws {
+    let cursor = try await metadata.loadCDCCursor()
     var durable: [DurablePendingChange] = []
     for table in configuration.syncedTables {
-      let rows = try connection.query(
+      let rows = try await connection.query(
         "SELECT \(RowSQL.quoteIdent(table.primaryKeyColumn)) AS pk FROM \(RowSQL.quoteIdent(table.name))"
       )
       for row in rows {
@@ -684,17 +683,17 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
       }
     }
     if !durable.isEmpty {
-      try metadata.stagePendingChanges(durable, through: cursor)
+      try await metadata.stagePendingChanges(durable, through: cursor)
       enqueueDurableChanges(durable)
     }
   }
 
-  private func discardPending(recordID: CKRecord.ID, engine: CKSyncEngine? = nil) throws {
-    try metadata.removePendingChange(recordName: recordID.recordName)
+  private func discardPending(recordID: CKRecord.ID, engine: CKSyncEngine? = nil) async throws {
+    try await metadata.removePendingChange(recordName: recordID.recordName)
     let alternatives: [CKSyncEngine.PendingRecordZoneChange] = [
       .saveRecord(recordID), .deleteRecord(recordID),
     ]
-    lock.lock()
+    
     if let engine = engine ?? syncEngine {
       engine.state.remove(pendingRecordZoneChanges: alternatives)
     }
@@ -704,25 +703,25 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
       @unknown default: return false
       }
     }
-    lock.unlock()
+    
   }
 
-  func acknowledgePendingChangeForTesting(recordID: CKRecord.ID) throws {
-    try discardPending(recordID: recordID)
+  func acknowledgePendingChangeForTesting(recordID: CKRecord.ID) async throws {
+    try await discardPending(recordID: recordID)
   }
 
-  func recordForPendingSaveForTesting(recordID: CKRecord.ID) throws -> CKRecord? {
-    try recordForPendingSave(recordID: recordID)
+  func recordForPendingSaveForTesting(recordID: CKRecord.ID) async throws -> CKRecord? {
+    try await recordForPendingSave(recordID: recordID)
   }
 
   private func recordForPendingSave(
     recordID: CKRecord.ID,
     engine: CKSyncEngine? = nil
-  ) throws -> CKRecord? {
-    if let record = try makeRecord(for: recordID) {
+  ) async throws -> CKRecord? {
+    if let record = try await makeRecord(for: recordID) {
       return record
     }
-    try discardPending(recordID: recordID, engine: engine)
+    try await discardPending(recordID: recordID, engine: engine)
     return nil
   }
 
@@ -738,14 +737,14 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
 
   /// Turso CDC `id` is often the integer rowid even when the table PK is TEXT.
   /// Resolve the configured primary-key column value for CloudKit record names.
-  private func resolveRowPK(table: SyncedTable, change: CDCChange) throws -> String? {
+  private func resolveRowPK(table: SyncedTable, change: CDCChange) async throws -> String? {
     if case .text(let text) = change.rowID, !text.isEmpty {
       return text
     }
 
     if !change.isDelete {
       if let rowid = change.rowID.int64Value {
-        let row = try connection.queryOne(
+        let row = try await connection.queryOne(
           """
           SELECT \(RowSQL.quoteIdent(table.primaryKeyColumn)) AS pk
           FROM \(RowSQL.quoteIdent(table.name))
@@ -759,13 +758,13 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
           if !pk.isEmpty { return pk }
         }
       }
-      if let payload = try decodeCDCPayload(table: table, blob: change.after),
+      if let payload = try await decodeCDCPayload(table: table, blob: change.after),
         let value = payload[table.primaryKeyColumn]
       {
         let pk = rowPKString(from: value)
         if !pk.isEmpty { return pk }
       }
-    } else if let payload = try decodeCDCPayload(table: table, blob: change.before),
+    } else if let payload = try await decodeCDCPayload(table: table, blob: change.before),
       let value = payload[table.primaryKeyColumn]
     {
       let pk = rowPKString(from: value)
@@ -776,9 +775,9 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
     return fallback.isEmpty ? nil : fallback
   }
 
-  private func decodeCDCPayload(table: SyncedTable, blob: Data?) throws -> [String: TursoValue]? {
+  private func decodeCDCPayload(table: SyncedTable, blob: Data?) async throws -> [String: TursoValue]? {
     guard let blob, !blob.isEmpty else { return nil }
-    let rows = try connection.query(
+    let rows = try await connection.query(
       """
       SELECT bin_record_json_object(
         table_columns_json_array(?),
@@ -829,9 +828,9 @@ public final class TursoCKSyncEngine: @unchecked Sendable {
 
   private func publishStatus(_ status: SyncStatus) {
     let sink: (@Sendable (SyncStatus) -> Void)?
-    lock.lock()
+    
     sink = _statusSink
-    lock.unlock()
+    
     sink?(status)
   }
 }
@@ -843,29 +842,29 @@ extension TursoCKSyncEngine: CKSyncEngineDelegate {
     do {
       switch event {
       case .stateUpdate(let update):
-        try metadata.saveStateSerialization(update.stateSerialization)
+        try await metadata.saveStateSerialization(update.stateSerialization)
 
       case .accountChange(let change):
-        try handleAccountChange(change)
+        try await handleAccountChange(change)
 
       case .fetchedDatabaseChanges(let changes):
         for deletion in changes.deletions where deletion.zoneID == zoneID {
           // Zone gone — wipe local synced data and rebootstrap.
-          try wipeAndRebootstrap(preserveLocalUserData: false)
+          try await wipeAndRebootstrap(preserveLocalUserData: false)
         }
 
       case .fetchedRecordZoneChanges(let changes):
         publishStatus(.syncing)
         for modification in changes.modifications {
-          try applyModification(modification.record)
+          try await applyModification(modification.record)
         }
         for deletion in changes.deletions {
-          try applyDeletion(deletion.recordID)
+          try await applyDeletion(deletion.recordID)
         }
         publishStatus(.idle)
 
       case .sentRecordZoneChanges(let sent):
-        try handleSentRecordZoneChanges(sent, syncEngine: syncEngine)
+        try await handleSentRecordZoneChanges(sent, syncEngine: syncEngine)
 
       case .sentDatabaseChanges:
         zoneBootstrapped = true
@@ -902,7 +901,7 @@ extension TursoCKSyncEngine: CKSyncEngineDelegate {
       [weak self] recordID in
       guard let self else { return nil }
       do {
-        return try self.recordForPendingSave(recordID: recordID, engine: syncEngine)
+        return try await self.recordForPendingSave(recordID: recordID, engine: syncEngine)
       } catch {
         logger.error("recordProvider failed: \(error.localizedDescription, privacy: .public)")
         return nil
@@ -913,20 +912,20 @@ extension TursoCKSyncEngine: CKSyncEngineDelegate {
   private func handleSentRecordZoneChanges(
     _ event: CKSyncEngine.Event.SentRecordZoneChanges,
     syncEngine: CKSyncEngine
-  ) throws {
+  ) async throws {
     for saved in event.savedRecords {
       guard let parsed = RecordIdentity.parse(saved.recordID.recordName) else { continue }
-      try metadata.upsertRecordMeta(
+      try await metadata.upsertRecordMeta(
         table: parsed.table,
         rowPK: parsed.rowPK,
         recordName: saved.recordID.recordName,
         zoneName: saved.recordID.zoneID.zoneName,
         systemFields: RecordMapper.encodeSystemFields(saved)
       )
-      try metadata.removePendingChange(recordName: saved.recordID.recordName)
+      try await metadata.removePendingChange(recordName: saved.recordID.recordName)
     }
     for deletedRecordID in event.deletedRecordIDs {
-      try metadata.removePendingChange(recordName: deletedRecordID.recordName)
+      try await metadata.removePendingChange(recordName: deletedRecordID.recordName)
     }
 
     var retryRecords: [CKSyncEngine.PendingRecordZoneChange] = []
@@ -936,7 +935,7 @@ extension TursoCKSyncEngine: CKSyncEngineDelegate {
       switch failure.error.code {
       case .serverRecordChanged:
         if let server = failure.error.serverRecord {
-          try handleServerRecordChanged(
+          try await handleServerRecordChanged(
             failedRecord: failure.record,
             serverRecord: server,
             engine: syncEngine
@@ -947,7 +946,7 @@ extension TursoCKSyncEngine: CKSyncEngineDelegate {
         retryRecords.append(.saveRecord(failure.record.recordID))
       case .unknownItem:
         if let parsed = RecordIdentity.parse(failure.record.recordID.recordName) {
-          try metadata.upsertRecordMeta(
+          try await metadata.upsertRecordMeta(
             table: parsed.table,
             rowPK: parsed.rowPK,
             recordName: failure.record.recordID.recordName,

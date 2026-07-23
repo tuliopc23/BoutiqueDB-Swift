@@ -1,4 +1,5 @@
 import BoutiqueDB
+import CloudKit
 import Foundation
 import StructuredQueries
 import StructuredQueriesTurso
@@ -6,6 +7,12 @@ import Testing
 import TursoCKSync
 import TursoKit
 import TursoObservation
+
+extension TursoCKSyncEngine {
+  func setInjectedAccountStatus(_ status: CKAccountStatus?) {
+    injectedAccountStatus = status
+  }
+}
 
 @Table
 struct PRNote: Sendable {
@@ -24,8 +31,8 @@ struct ProdReadinessTests {
   @Test func fetchOneMissingReturnsNil() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let db = try BoutiqueDB(url: url, startListening: false)
-    defer { db.close() }
+    let db = try await BoutiqueDB(url: url, startListening: false)
+    defer { await db.close() }
     try await db.execute(
       """
       CREATE TABLE prNotes (
@@ -41,8 +48,8 @@ struct ProdReadinessTests {
   @Test func fetchOneFindsRow() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let db = try BoutiqueDB(url: url, startListening: false)
-    defer { db.close() }
+    let db = try await BoutiqueDB(url: url, startListening: false)
+    defer { await db.close() }
     try await db.execute(
       """
       CREATE TABLE prNotes (
@@ -52,7 +59,7 @@ struct ProdReadinessTests {
       """
     )
     try await db.write { conn in
-      try conn.execute(
+      try await conn.execute(
         "INSERT INTO prNotes (id, title) VALUES ('1','hi')"
       )
     }
@@ -71,7 +78,7 @@ struct ProdReadinessTests {
         })
     }
     let db = try await BoutiqueDB.open(url: url, startListening: false, migrations: plan)
-    defer { db.close() }
+    defer { await db.close() }
     let done = try await BoutiqueMigrator().hasCompletedMigrations(on: db, plan: plan)
     #expect(done)
   }
@@ -81,13 +88,13 @@ struct ProdReadinessTests {
     defer { try? FileManager.default.removeItem(at: url) }
     enum Expected: Error { case stop }
     let plan = BoutiqueMigrationPlan {
-      BoutiqueMigration("v1") { connection in
-        try connection.execute("CREATE TABLE atomic_default (id INTEGER PRIMARY KEY)")
+      BoutiqueMigration("v1", migrate: { connection in
+        try await connection.execute("CREATE TABLE atomic_default (id INTEGER PRIMARY KEY)")
         throw Expected.stop
-      }
+      })
     }
-    let db = try BoutiqueDB(url: url, startListening: false)
-    defer { db.close() }
+    let db = try await BoutiqueDB(url: url, startListening: false)
+    defer { await db.close() }
 
     await #expect(throws: BoutiqueError.self) {
       try await db.migrate(using: plan)
@@ -123,8 +130,8 @@ struct ProdReadinessTests {
   @Test func schemaSyncEnsuresColumns() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let db = try BoutiqueDB(url: url, startListening: false)
-    defer { db.close() }
+    let db = try await BoutiqueDB(url: url, startListening: false)
+    defer { await db.close() }
     try await db.execute(
       "CREATE TABLE columnItems (id TEXT PRIMARY KEY NOT NULL)"
     )
@@ -148,12 +155,12 @@ struct ProdReadinessTests {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
     // Without CDC, true MVCC concurrent begin is available on primary.
-    let db = try BoutiqueDB(
+    let db = try await BoutiqueDB(
       url: url,
       startListening: false,
       enableCDC: false,
       concurrentWrites: true)
-    defer { db.close() }
+    defer { await db.close() }
     try await db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
     try await db.beginConcurrent()
     await #expect(throws: BoutiqueError.transactionInProgress) {
@@ -162,44 +169,44 @@ struct ProdReadinessTests {
     try await db.rollbackConcurrent()
   }
 
-  @Test func capabilityProbeDoesNotEnableCDC() throws {
+  @Test func capabilityProbeDoesNotEnableCDC() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let db = try BoutiqueDB(url: url, startListening: false, enableCDC: false)
-    defer { db.close() }
+    let db = try await BoutiqueDB(url: url, startListening: false, enableCDC: false)
+    defer { await db.close() }
 
     #expect(!db.capabilities.cdc)
     #expect(
-      try db.unsafeConnection.queryOne(
+      try await db.unsafeConnection.queryOne(
         "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'turso_cdc'"
       ) == nil
     )
   }
 
-  @Test func capabilityProbeReportsConfiguredMVCC() throws {
+  @Test func capabilityProbeReportsConfiguredMVCC() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let db = try BoutiqueDB(
+    let db = try await BoutiqueDB(
       url: url,
       startListening: false,
       enableCDC: false,
       concurrentWrites: true
     )
-    defer { db.close() }
+    defer { await db.close() }
 
     #expect(db.capabilities.mvcc)
   }
 
-  @Test func queryBoxSurfacesRefreshFailure() throws {
+  @Test func queryBoxSurfacesRefreshFailure() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let connection = try TursoDatabase(url: url).connect(enableCDC: false)
-    defer { connection.close() }
-    let store = TursoStore(connection: connection)
+    let connection = try await TursoDatabase(url: url).connect(enableCDC: false)
+    defer { await connection.close() }
+    let store = try await TursoStore(connection: connection)
     enum Expected: Error { case failed }
     let box = TursoQueryBox(store: store, initial: 1) { throw Expected.failed }
 
-    box.forceRefresh()
+    await box.forceRefresh()
 
     #expect(box.value == 1)
     #expect(box.fetchError?.contains("failed") == true)
@@ -208,8 +215,8 @@ struct ProdReadinessTests {
   @Test func dropTableIfExists() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let db = try BoutiqueDB(url: url, startListening: false)
-    defer { db.close() }
+    let db = try await BoutiqueDB(url: url, startListening: false)
+    defer { await db.close() }
     try await db.execute("CREATE TABLE doomed (id INTEGER PRIMARY KEY)")
     try await db.dropTableIfExists("doomed")
     let exists = try await db.tableExists("doomed")
@@ -226,8 +233,8 @@ struct ProdReadinessTests {
   @Test func liveQueryOneSetQuery() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let db = try BoutiqueDB(url: url, startListening: false)
-    defer { db.close() }
+    let db = try await BoutiqueDB(url: url, startListening: false)
+    defer { await db.close() }
     try await db.execute(
       """
       CREATE TABLE prNotes (
@@ -237,7 +244,7 @@ struct ProdReadinessTests {
       """
     )
     try await db.write { conn in
-      try conn.execute(
+      try await conn.execute(
         "INSERT INTO prNotes (id, title) VALUES ('a','alpha'), ('b','beta')"
       )
     }
@@ -261,13 +268,13 @@ struct ProdReadinessTests {
   @Test func accountStatusNeedsAuthentication() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let conn = try TursoDatabase(url: url).connect(enableCDC: true)
-    defer { conn.close() }
-    try conn.execute(
+    let conn = try await TursoDatabase(url: url).connect(enableCDC: true)
+    defer { await conn.close() }
+    try await conn.execute(
       "CREATE TABLE notes (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL)"
     )
     // Offline engine (no live CK container) — still exercises status mapping.
-    let engine = try TursoCKSyncEngine(
+    let engine = try await TursoCKSyncEngine(
       connection: conn,
       configuration: TursoCKSyncConfiguration(
         syncedTables: [SyncedTable(name: "notes", columns: ["title"])],
@@ -278,40 +285,43 @@ struct ProdReadinessTests {
       var statuses: [SyncStatus] = []
     }
     let box = Box()
-    engine.statusSink = { box.statuses.append($0) }
-    try engine.applyAccountStatus(.noAccount)
+    await engine.setStatusSink { box.statuses.append($0) }
+    try await engine.applyAccountStatus(.noAccount)
     #expect(box.statuses.contains(.needsAuthentication))
 
     // With CloudKit flag + inject, detect path also publishes.
-    engine.injectedAccountStatus = .restricted
+    await engine.setInjectedAccountStatus(.restricted)
     // detect short-circuits when enablesCloudKit is false — call apply again.
-    try engine.applyAccountStatus(.restricted)
+    try await engine.applyAccountStatus(.restricted)
     #expect(box.statuses.filter { $0 == .needsAuthentication }.count >= 2)
   }
 
-  @Test func isSynchronizingUsesLockedFlag() throws {
+  @Test func isSynchronizingUsesLockedFlag() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let conn = try TursoDatabase(url: url).connect(enableCDC: false)
-    #expect(!conn.isApplyingRemoteChanges)
-    conn.withSynchronizingFlag {
-      #expect(conn.isApplyingRemoteChanges)
-      conn.withSynchronizingFlag {
-        #expect(conn.isApplyingRemoteChanges)
+    let conn = try await TursoDatabase(url: url).connect(enableCDC: false)
+    #expect(!(await conn.isApplyingRemoteChanges))
+    await conn.withSynchronizingFlag { @Sendable in
+      let applying1 = await conn.isApplyingRemoteChanges
+      #expect(applying1)
+      await conn.withSynchronizingFlag { @Sendable in
+        let applying2 = await conn.isApplyingRemoteChanges
+        #expect(applying2)
       }
-      #expect(conn.isApplyingRemoteChanges)
+      let applying3 = await conn.isApplyingRemoteChanges
+      #expect(applying3)
     }
-    #expect(!conn.isApplyingRemoteChanges)
+    #expect(!(await conn.isApplyingRemoteChanges))
   }
 
   @Test func asyncIOOpenAndWrite() async throws {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
-    let db = try BoutiqueDB(
+    let db = try await BoutiqueDB(
       url: url,
       startListening: false,
       openOptions: .tursoEnhancedAsync)
-    defer { db.close() }
+    defer { await db.close() }
     #expect(db.unsafeConnection.usesAsyncIO)
     try await db.execute(
       """
@@ -322,13 +332,13 @@ struct ProdReadinessTests {
       """
     )
     try await db.write { conn in
-      try conn.execute(
+      try await conn.execute(
         "INSERT INTO asyncNotes (id, title) VALUES (?, ?)",
         [.text("a1"), .text("async")]
       )
     }
     let rows = try await db.read { conn in
-      try conn.query("SELECT title FROM asyncNotes WHERE id = ?", [.text("a1")])
+      try await conn.query("SELECT title FROM asyncNotes WHERE id = ?", [.text("a1")])
     }
     #expect(rows.first?["title"]?.stringValue == "async")
   }
@@ -339,9 +349,9 @@ struct ProdReadinessTests {
       url: url,
       startListening: false,
       openOptions: .tursoEnhancedAsync)
-    defer { db.close() }
+    defer { await db.close() }
     defer {
-      db.close()
+      await db.close()
       try? FileManager.default.removeItem(at: url)
     }
     #expect(db.unsafeConnection.usesAsyncIO)

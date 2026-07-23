@@ -14,7 +14,7 @@ public protocol SyncAdapter: AnyObject, Sendable {
   func stop() async
 
   /// Live sync status for SwiftUI (no polling).
-  func syncStatus() -> AsyncStream<SyncStatus>
+  func syncStatus() async -> AsyncStream<SyncStatus>
 
   /// Drain local CDC into pending outbound changes. Returns number of pending ops enqueued.
   @discardableResult
@@ -80,31 +80,31 @@ public enum RemoteChange: Sendable, Equatable {
 }
 
 /// Default CloudKit-backed ``SyncAdapter``.
-public final class CloudKitSyncAdapter: SyncAdapter, @unchecked Sendable {
-  public let engine: TursoCKSyncEngine
+public final actor CloudKitSyncAdapter: SyncAdapter {
+  nonisolated public let engine: TursoCKSyncEngine
 
-  private let statusLock = NSLock()
   private var statusContinuations: [UUID: AsyncStream<SyncStatus>.Continuation] = [:]
   private var currentStatus: SyncStatus = .idle
 
-  public init(engine: TursoCKSyncEngine) {
+  public init(engine: TursoCKSyncEngine) async {
     self.engine = engine
-    engine.statusSink = { [weak self] status in
-      self?.publish(status)
+    await engine.setStatusSink { [weak self] status in
+      Task { await self?.publish(status) }
     }
   }
 
-  public convenience init(
+  public init(
     connection: TursoConnection,
     configuration: TursoCKSyncConfiguration,
     container: CKContainer? = nil
-  ) throws {
-    let engine = try TursoCKSyncEngine(
-      connection: connection,
-      configuration: configuration,
-      container: container
+  ) async throws {
+    await self.init(
+      engine: try await TursoCKSyncEngine(
+        connection: connection,
+        configuration: configuration,
+        container: container
+      )
     )
-    self.init(engine: engine)
   }
 
   public func start() async throws {
@@ -115,7 +115,7 @@ public final class CloudKitSyncAdapter: SyncAdapter, @unchecked Sendable {
   public func start(automaticallySync: Bool) async throws {
     publish(.syncing)
     do {
-      try engine.start(automaticallySync: automaticallySync)
+      try await engine.start(automaticallySync: automaticallySync)
       try await engine.detectAccountIdentityChangeIfNeeded()
       publish(.idle)
     } catch {
@@ -125,23 +125,17 @@ public final class CloudKitSyncAdapter: SyncAdapter, @unchecked Sendable {
   }
 
   public func stop() async {
-    engine.stop()
+    await engine.stop()
     publish(.idle)
   }
 
-  public func syncStatus() -> AsyncStream<SyncStatus> {
+  public func syncStatus() async -> AsyncStream<SyncStatus> {
     AsyncStream(bufferingPolicy: .bufferingNewest(8)) { continuation in
       let id = UUID()
-      statusLock.lock()
-      statusContinuations[id] = continuation
-      let initialStatus = currentStatus
-      statusLock.unlock()
-      continuation.yield(initialStatus)
+      self.statusContinuations[id] = continuation
+      continuation.yield(self.currentStatus)
       continuation.onTermination = { [weak self] _ in
-        guard let self else { return }
-        self.statusLock.lock()
-        self.statusContinuations[id] = nil
-        self.statusLock.unlock()
+        Task { await self?.removeContinuation(id) }
       }
     }
   }
@@ -150,7 +144,7 @@ public final class CloudKitSyncAdapter: SyncAdapter, @unchecked Sendable {
   public func drainLocalChanges() async throws -> Int {
     publish(.syncing)
     do {
-      let count = try engine.drainCDC(limit: engine.configuration.drainCDCLimit)
+      let count = try await engine.drainCDC(limit: engine.configuration.drainCDCLimit)
       publish(.idle)
       return count
     } catch {
@@ -165,9 +159,9 @@ public final class CloudKitSyncAdapter: SyncAdapter, @unchecked Sendable {
       for change in changes {
         switch change {
         case .upsert(let record):
-          try engine.applyRemoteRecord(makeCloudKitRecord(from: record))
+          try await engine.applyRemoteRecord(makeCloudKitRecord(from: record))
         case .delete(let recordName):
-          try engine.applyRemoteDeletion(
+          try await engine.applyRemoteDeletion(
             recordID: CKRecord.ID(recordName: recordName, zoneID: engine.zoneID)
           )
         }
@@ -209,7 +203,7 @@ public final class CloudKitSyncAdapter: SyncAdapter, @unchecked Sendable {
     try await sendChanges()
   }
 
-  private func makeCloudKitRecord(from record: RemoteRecord) throws -> CKRecord {
+  private func makeCloudKitRecord(from record: RemoteRecord) async throws -> CKRecord {
     let recordID = CKRecord.ID(recordName: record.recordName, zoneID: engine.zoneID)
     let cloudRecord: CKRecord
     if let metadata = record.transportMetadata {
@@ -244,12 +238,13 @@ public final class CloudKitSyncAdapter: SyncAdapter, @unchecked Sendable {
   }
 
   private func publish(_ status: SyncStatus) {
-    statusLock.lock()
     currentStatus = status
-    let conts = statusContinuations.values
-    statusLock.unlock()
-    for cont in conts {
+    for cont in statusContinuations.values {
       cont.yield(status)
     }
+  }
+
+  private func removeContinuation(_ id: UUID) {
+    statusContinuations[id] = nil
   }
 }

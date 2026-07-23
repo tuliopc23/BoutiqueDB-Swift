@@ -4,16 +4,16 @@ import TursoKit
 
 extension StructuredQueriesCore.Statement {
   /// Executes a structured query (INSERT/UPDATE/DELETE) on a Turso connection.
-  public func execute(_ db: TursoConnection) throws where QueryValue == () {
-    try db.run(query: query) { statement in
+  public func execute(_ db: TursoConnection) async throws where QueryValue == () {
+    try await db.run(query: query) { statement in
       _ = try statement.step()
     }
   }
 
   /// Returns all decoded rows for a structured query.
-  public func fetchAll(_ db: TursoConnection) throws -> [QueryValue.QueryOutput]
-  where QueryValue: QueryRepresentable {
-    try db.run(query: query) { statement in
+  public func fetchAll(_ db: TursoConnection) async throws -> [QueryValue.QueryOutput]
+  where QueryValue: QueryRepresentable, QueryValue.QueryOutput: Sendable {
+    try await db.run(query: query) { statement in
       var decoder = TursoQueryDecoder(statement: statement)
       var results: [QueryValue.QueryOutput] = []
       while try statement.step() {
@@ -25,18 +25,18 @@ extension StructuredQueriesCore.Statement {
   }
 
   /// Returns the first decoded row, if any.
-  public func fetchOne(_ db: TursoConnection) throws -> QueryValue.QueryOutput?
-  where QueryValue: QueryRepresentable {
-    try fetchAll(db).first
+  public func fetchOne(_ db: TursoConnection) async throws -> QueryValue.QueryOutput?
+  where QueryValue: QueryRepresentable, QueryValue.QueryOutput: Sendable {
+    try await fetchAll(db).first
   }
 }
 
 extension StructuredQueriesCore.Statement {
   public func fetchAll<each Value: QueryRepresentable>(
     _ db: TursoConnection
-  ) throws -> [(repeat (each Value).QueryOutput)]
-  where QueryValue == (repeat each Value) {
-    try db.run(query: query) { statement in
+  ) async throws -> [(repeat (each Value).QueryOutput)]
+  where QueryValue == (repeat each Value), repeat (each Value).QueryOutput: Sendable {
+    try await db.run(query: query) { statement in
       var decoder = TursoQueryDecoder(statement: statement)
       var results: [(repeat (each Value).QueryOutput)] = []
       while try statement.step() {
@@ -49,15 +49,16 @@ extension StructuredQueriesCore.Statement {
 
   public func fetchOne<each Value: QueryRepresentable>(
     _ db: TursoConnection
-  ) throws -> (repeat (each Value).QueryOutput)?
-  where QueryValue == (repeat each Value) {
-    try fetchAll(db).first
+  ) async throws -> (repeat (each Value).QueryOutput)?
+  where QueryValue == (repeat each Value), repeat (each Value).QueryOutput: Sendable {
+    try await fetchAll(db).first
   }
 }
 
 extension SelectStatement where QueryValue == (), Joins == () {
-  public func fetchAll(_ db: TursoConnection) throws -> [From.QueryOutput] {
-    try db.run(query: query) { statement in
+  public func fetchAll(_ db: TursoConnection) async throws -> [From.QueryOutput]
+  where From.QueryOutput: Sendable {
+    try await db.run(query: query) { statement in
       var decoder = TursoQueryDecoder(statement: statement)
       var results: [From.QueryOutput] = []
       while try statement.step() {
@@ -68,21 +69,23 @@ extension SelectStatement where QueryValue == (), Joins == () {
     }
   }
 
-  public func fetchOne(_ db: TursoConnection) throws -> From.QueryOutput? {
-    try asSelect().limit(1).fetchAll(db).first
+  public func fetchOne(_ db: TursoConnection) async throws -> From.QueryOutput?
+  where From.QueryOutput: Sendable {
+    try await asSelect().limit(1).fetchAll(db).first
   }
 
-  public func fetchCount(_ db: TursoConnection) throws -> Int {
-    try asSelect().count().fetchOne(db) ?? 0
+  public func fetchCount(_ db: TursoConnection) async throws -> Int
+  where From.QueryOutput: Sendable {
+    try await asSelect().count().fetchOne(db) ?? 0
   }
 }
 
-extension SelectStatement where QueryValue == (), From: PrimaryKeyedTable, Joins == () {
+extension SelectStatement where QueryValue == (), From: PrimaryKeyedTable, Joins == (), From.QueryOutput: Sendable {
   public func find(
     _ db: TursoConnection,
     key primaryKey: some QueryExpression<From.PrimaryKey>
-  ) throws -> From.QueryOutput {
-    guard let record = try asSelect().find(primaryKey).fetchOne(db) else {
+  ) async throws -> From.QueryOutput {
+    guard let record = try await asSelect().find(primaryKey).fetchOne(db) else {
       throw TursoError(code: -1, message: "Record not found")
     }
     return record
@@ -90,7 +93,7 @@ extension SelectStatement where QueryValue == (), From: PrimaryKeyedTable, Joins
 }
 
 extension TursoConnection {
-  func run<T>(query: QueryFragment, body: (TursoStatement) throws -> T) throws -> T {
+  func run<T: Sendable>(query: QueryFragment, body: (TursoStatement) throws -> sending T) throws -> sending T {
     guard !query.isEmpty else {
       throw TursoError(code: -1, message: "Empty query fragment")
     }

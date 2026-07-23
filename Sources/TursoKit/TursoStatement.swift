@@ -16,7 +16,7 @@ public final class TursoStatement {
   private var finalized = false
   private let asyncIO: Bool
 
-  init(connection: OpaquePointer, sql: String, asyncIO: Bool) throws {
+  init(connection: consuming OpaquePointer, sql: String, asyncIO: Bool) throws {
     self.asyncIO = asyncIO
     var stmt: OpaquePointer?
     var err: UnsafePointer<CChar>?

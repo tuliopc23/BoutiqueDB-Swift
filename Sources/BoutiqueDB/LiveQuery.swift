@@ -66,7 +66,7 @@ where Element == Element.QueryOutput {
     isLoading = true
     let q = query
     do {
-      let rows = try await db.read { try q().fetchAll($0.connection) }
+      let rows = try await db.read { try await q().fetchAll($0.connection) }
       guard
         !Task.isCancelled, queryRevision == self.queryRevision,
         loadRevision == self.loadRevision

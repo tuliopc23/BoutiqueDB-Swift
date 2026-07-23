@@ -75,29 +75,29 @@ public struct SyncMetadataStore: Sendable {
     self.connection = connection
   }
 
-  public func migrate() throws {
+  public func migrate() async throws {
     for statement in Self.schemaSQL.split(separator: ";") {
       let sql = statement.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !sql.isEmpty else { continue }
-      try connection.execute(sql)
+      try await connection.execute(sql)
     }
-    try saveFormatVersion(Self.currentFormatVersion)
+    try await saveFormatVersion(Self.currentFormatVersion)
   }
 
   // MARK: - Engine state
 
-  public func loadStateSerialization() throws -> CKSyncEngine.State.Serialization? {
+  public func loadStateSerialization() async throws -> CKSyncEngine.State.Serialization? {
     guard
-      let data = try connection.queryOne("SELECT state_blob FROM ck_sync_state WHERE id = 1")?[
+      let data = try await connection.queryOne("SELECT state_blob FROM ck_sync_state WHERE id = 1")?[
         "state_blob"
       ]?.dataValue
     else { return nil }
     return try JSONDecoder().decode(CKSyncEngine.State.Serialization.self, from: data)
   }
 
-  public func saveStateSerialization(_ state: CKSyncEngine.State.Serialization) throws {
+  public func saveStateSerialization(_ state: CKSyncEngine.State.Serialization) async throws {
     let data = try JSONEncoder().encode(state)
-    try connection.execute(
+    try await connection.execute(
       """
       INSERT INTO ck_sync_state (id, state_blob, updated_at)
       VALUES (1, ?, ?)
@@ -109,20 +109,20 @@ public struct SyncMetadataStore: Sendable {
     )
   }
 
-  public func clearStateSerialization() throws {
-    try connection.execute("DELETE FROM ck_sync_state")
+  public func clearStateSerialization() async throws {
+    try await connection.execute("DELETE FROM ck_sync_state")
   }
 
   // MARK: - CDC cursor
 
-  public func loadCDCCursor() throws -> Int64 {
-    try connection.queryOne("SELECT last_change_id FROM ck_cdc_cursor WHERE id = 1")?[
+  public func loadCDCCursor() async throws -> Int64 {
+    try await connection.queryOne("SELECT last_change_id FROM ck_cdc_cursor WHERE id = 1")?[
       "last_change_id"
     ]?.int64Value ?? 0
   }
 
-  public func saveCDCCursor(_ changeID: Int64) throws {
-    try connection.execute(
+  public func saveCDCCursor(_ changeID: Int64) async throws {
+    try await connection.execute(
       """
       UPDATE ck_cdc_cursor
       SET last_change_id = ?, updated_at = ?
@@ -132,18 +132,18 @@ public struct SyncMetadataStore: Sendable {
     )
   }
 
-  func stagePendingChanges(_ changes: [DurablePendingChange], through changeID: Int64) throws {
-    try connection.write {
-      try stagePendingChangesInCurrentTransaction(changes, through: changeID)
+  func stagePendingChanges(_ changes: [DurablePendingChange], through changeID: Int64) async throws {
+    try await connection.writeAsync { @Sendable in
+      try await stagePendingChangesInCurrentTransaction(changes, through: changeID)
     }
   }
 
   func stagePendingChangesInCurrentTransaction(
     _ changes: [DurablePendingChange],
     through changeID: Int64
-  ) throws {
+  ) async throws {
     for change in changes {
-      try connection.execute(
+      try await connection.execute(
         """
         INSERT INTO ck_pending_changes
           (record_name, table_name, row_pk, zone_name, operation, change_id, updated_at)
@@ -163,11 +163,11 @@ public struct SyncMetadataStore: Sendable {
         ]
       )
     }
-    try saveCDCCursor(changeID)
+    try await saveCDCCursor(changeID)
   }
 
-  func loadPendingChanges() throws -> [DurablePendingChange] {
-    try connection.query(
+  func loadPendingChanges() async throws -> [DurablePendingChange] {
+    try await connection.query(
       """
       SELECT record_name, table_name, row_pk, zone_name, operation, change_id
       FROM ck_pending_changes
@@ -193,21 +193,21 @@ public struct SyncMetadataStore: Sendable {
     }
   }
 
-  func removePendingChange(recordName: String) throws {
-    try connection.execute(
+  func removePendingChange(recordName: String) async throws {
+    try await connection.execute(
       "DELETE FROM ck_pending_changes WHERE record_name = ?",
       [.text(recordName)]
     )
   }
 
-  func removeAllPendingChanges() throws {
-    try connection.execute("DELETE FROM ck_pending_changes")
+  func removeAllPendingChanges() async throws {
+    try await connection.execute("DELETE FROM ck_pending_changes")
   }
 
   // MARK: - Record meta
 
-  public func systemFields(table: String, rowPK: String) throws -> Data? {
-    try connection.queryOne(
+  public func systemFields(table: String, rowPK: String) async throws -> Data? {
+    try await connection.queryOne(
       """
       SELECT system_fields FROM ck_record_meta
       WHERE table_name = ? AND row_pk = ?
@@ -216,8 +216,8 @@ public struct SyncMetadataStore: Sendable {
     )?["system_fields"]?.dataValue
   }
 
-  public func systemFields(recordName: String) throws -> Data? {
-    try connection.queryOne(
+  public func systemFields(recordName: String) async throws -> Data? {
+    try await connection.queryOne(
       """
       SELECT system_fields FROM ck_record_meta
       WHERE record_name = ?
@@ -232,8 +232,8 @@ public struct SyncMetadataStore: Sendable {
     recordName: String,
     zoneName: String,
     systemFields: Data?
-  ) throws {
-    try connection.execute(
+  ) async throws {
+    try await connection.execute(
       """
       INSERT INTO ck_record_meta
         (table_name, row_pk, record_name, zone_name, system_fields, updated_at)
@@ -255,8 +255,8 @@ public struct SyncMetadataStore: Sendable {
     )
   }
 
-  public func deleteRecordMeta(table: String, rowPK: String) throws {
-    try connection.execute(
+  public func deleteRecordMeta(table: String, rowPK: String) async throws {
+    try await connection.execute(
       """
       DELETE FROM ck_record_meta
       WHERE table_name = ? AND row_pk = ?
@@ -265,16 +265,16 @@ public struct SyncMetadataStore: Sendable {
     )
   }
 
-  public func deleteRecordMeta(recordName: String) throws {
-    try connection.execute(
+  public func deleteRecordMeta(recordName: String) async throws {
+    try await connection.execute(
       "DELETE FROM ck_record_meta WHERE record_name = ?",
       [.text(recordName)]
     )
   }
 
-  public func resolveRow(recordName: String) throws -> (table: String, rowPK: String)? {
+  public func resolveRow(recordName: String) async throws -> (table: String, rowPK: String)? {
     guard
-      let row = try connection.queryOne(
+      let row = try await connection.queryOne(
         "SELECT table_name, row_pk FROM ck_record_meta WHERE record_name = ?",
         [.text(recordName)]
       ),
@@ -284,11 +284,11 @@ public struct SyncMetadataStore: Sendable {
     return (table, rowPK)
   }
 
-  public func wipeAll() throws {
-    try connection.execute("DELETE FROM ck_record_meta")
-    try connection.execute("DELETE FROM ck_sync_state")
-    try connection.execute("DELETE FROM ck_pending_changes")
-    try connection.execute(
+  public func wipeAll() async throws {
+    try await connection.execute("DELETE FROM ck_record_meta")
+    try await connection.execute("DELETE FROM ck_sync_state")
+    try await connection.execute("DELETE FROM ck_pending_changes")
+    try await connection.execute(
       """
       UPDATE ck_cdc_cursor
       SET last_change_id = 0, updated_at = ?
@@ -296,7 +296,7 @@ public struct SyncMetadataStore: Sendable {
       """,
       [.double(Date().timeIntervalSince1970)]
     )
-    try connection.execute(
+    try await connection.execute(
       """
       UPDATE ck_account
       SET account_hash = NULL, updated_at = ?
@@ -308,14 +308,14 @@ public struct SyncMetadataStore: Sendable {
 
   // MARK: - Account identity (BD-007)
 
-  public func loadAccountHash() throws -> String? {
-    try connection.queryOne("SELECT account_hash FROM ck_account WHERE id = 1")?[
+  public func loadAccountHash() async throws -> String? {
+    try await connection.queryOne("SELECT account_hash FROM ck_account WHERE id = 1")?[
       "account_hash"
     ]?.stringValue
   }
 
-  public func saveAccountHash(_ hash: String?) throws {
-    try connection.execute(
+  public func saveAccountHash(_ hash: String?) async throws {
+    try await connection.execute(
       """
       INSERT INTO ck_account (id, account_hash, updated_at)
       VALUES (1, ?, ?)
@@ -333,14 +333,14 @@ public struct SyncMetadataStore: Sendable {
   /// Sync metadata format version (bump when on-disk layout changes incompatibly).
   public static let currentFormatVersion: Int64 = 2
 
-  public func loadFormatVersion() throws -> Int64 {
-    try connection.queryOne("SELECT format_version FROM ck_meta_version WHERE id = 1")?[
+  public func loadFormatVersion() async throws -> Int64 {
+    try await connection.queryOne("SELECT format_version FROM ck_meta_version WHERE id = 1")?[
       "format_version"
     ]?.int64Value ?? 1
   }
 
-  public func saveFormatVersion(_ version: Int64 = SyncMetadataStore.currentFormatVersion) throws {
-    try connection.execute(
+  public func saveFormatVersion(_ version: Int64 = SyncMetadataStore.currentFormatVersion) async throws {
+    try await connection.execute(
       """
       INSERT INTO ck_meta_version (id, format_version, updated_at)
       VALUES (1, ?, ?)
@@ -352,8 +352,8 @@ public struct SyncMetadataStore: Sendable {
     )
   }
 
-  func validateAndSaveSchema(_ tables: [SyncedTable]) throws {
-    let existingRows = try connection.query(
+  func validateAndSaveSchema(_ tables: [SyncedTable]) async throws {
+    let existingRows = try await connection.query(
       "SELECT table_name, primary_key, columns_json, record_type FROM ck_synced_schema"
     )
     var existing: [String: PersistedSyncedTableSchema] = [:]
@@ -382,9 +382,10 @@ public struct SyncMetadataStore: Sendable {
       )
     }
 
-    try connection.write {
+    let existingSnapshot = existing
+    try await connection.writeAsync { @Sendable [existingSnapshot] in
       for table in tables {
-        if let previous = existing[table.name] {
+        if let previous = existingSnapshot[table.name] {
           guard previous.primaryKey == table.primaryKeyColumn else {
             throw TursoCKSyncError.incompatibleSchemaMigration(
               table: table.name,
@@ -410,7 +411,7 @@ public struct SyncMetadataStore: Sendable {
         guard let columnsJSON = String(data: columnsData, encoding: .utf8) else {
           throw TursoCKSyncError.invalidConfiguration("Cannot encode sync schema metadata")
         }
-        try connection.execute(
+        try await connection.execute(
           """
           INSERT INTO ck_synced_schema (table_name, primary_key, columns_json, record_type)
           VALUES (?, ?, ?, ?)

@@ -13,7 +13,7 @@ import TursoObservation
 ///   ``writeConcurrent(maxAttempts:_:)`` — do not hold a
 ///   long-lived raw connection outside those scopes.
 /// - Important: CDC capture and MVCC cannot safely be enabled on separate
-///   handles after a database is active. With CDC enabled,
+///   connections after a database is active. With CDC enabled,
 ///   ``writeConcurrent(maxAttempts:_:)``
 ///   therefore uses retrying `BEGIN IMMEDIATE` writes on the primary handle so
 ///   changes always land in `turso_cdc` (BD-005 correctness fallback).
@@ -61,7 +61,7 @@ public final class BoutiqueDB: Sendable {
     openOptions: TursoOpenOptions = .tursoEnhanced,
     encryption: EncryptionConfig? = nil,
     multiProcess: Bool = false
-  ) throws {
+  ) async throws {
     var options = openOptions
     if multiProcess {
       options.insert(.multiprocessWAL)
@@ -83,7 +83,7 @@ public final class BoutiqueDB: Sendable {
     self.wantsConcurrentWrites = concurrentWrites
     self.database = TursoDatabase(url: url, openOptions: options)
     do {
-      self.connection = try database.connect(enableCDC: enableCDC)
+      self.connection = try await database.connect(enableCDC: enableCDC)
     } catch {
       // Map open failures for encryption/multiprocess to clear Boutique errors when possible.
       if multiProcess {
@@ -96,12 +96,12 @@ public final class BoutiqueDB: Sendable {
     }
 
     if concurrentWrites && !enableCDC {
-      try connection.execute("PRAGMA journal_mode = mvcc")
+      try await connection.execute("PRAGMA journal_mode = mvcc")
     }
 
     self.databaseActor = DatabaseActor(connection: connection)
-    self.store = TursoStore(connection: connection)
-    self.capabilities = TursoCapabilities.probe(on: connection)
+    self.store = try await TursoStore(connection: connection)
+    self.capabilities = await TursoCapabilities.probe(on: connection)
     if startListening {
       self.store.startListening()
     }
@@ -109,8 +109,8 @@ public final class BoutiqueDB: Sendable {
 
   /// Opens the native store from a shared bootstrap configuration.
   /// Use ``open(_:)`` when the configuration contains migrations or schema sync.
-  public convenience init(configuration: BoutiqueDBConfiguration) throws {
-    try self.init(
+  public convenience init(configuration: BoutiqueDBConfiguration) async throws {
+    try await self.init(
       url: configuration.url,
       startListening: configuration.startListening,
       enableCDC: configuration.enableCDC,
@@ -122,7 +122,12 @@ public final class BoutiqueDB: Sendable {
   }
 
   deinit {
-    database.close()
+    let connection = self.connection
+    let database = self.database
+    Task { @MainActor in
+      await connection.close()
+      await database.close()
+    }
   }
 
   /// Escape hatch for advanced callers that must touch the primary handle
@@ -179,19 +184,19 @@ public final class BoutiqueDB: Sendable {
 
   /// Stops observation and closes every native connection in dependency order.
   /// Safe to call repeatedly. No database API may be used after closing.
-  public func close() {
+  public func close() async {
     guard !closed else { return }
     closed = true
     store.stopListening()
-    connection.close()
-    database.close()
+    await connection.close()
+    await database.close()
     postCommitObservers.removeAll()
     onLocalCommit = nil
   }
 
   /// Backward-compatible alias.
-  public convenience init(url: URL, startPolling: Bool) throws {
-    try self.init(url: url, startListening: startPolling)
+  public convenience init(url: URL, startPolling: Bool) async throws {
+    try await self.init(url: url, startListening: startPolling)
   }
 
   /// Backward-compatible CDC+MVCC same-handle rejection (single connection).
@@ -200,11 +205,11 @@ public final class BoutiqueDB: Sendable {
     startListening: Bool = true,
     enableCDC: Bool,
     enableMVCC: Bool
-  ) throws {
+  ) async throws {
     if enableCDC && enableMVCC {
       throw BoutiqueError.cdcMutuallyExclusiveWithMVCC
     }
-    try self.init(
+    try await self.init(
       url: url,
       startListening: startListening,
       enableCDC: enableCDC,
@@ -215,14 +220,14 @@ public final class BoutiqueDB: Sendable {
   // MARK: - Async I/O
 
   public func read<T: Sendable>(
-    _ body: @Sendable (BoutiqueDBConnection) throws -> T
+    _ body: @Sendable (BoutiqueDBConnection) async throws -> T
   ) async throws -> T {
     try await databaseActor.read(body)
   }
 
   @discardableResult
   public func write<T: Sendable>(
-    _ body: @Sendable (inout BoutiqueDBConnection) throws -> T
+    _ body: @Sendable (inout BoutiqueDBConnection) async throws -> T
   ) async throws -> T {
     let value = try await databaseActor.write(body)
     notifyLocalCommit()
@@ -231,7 +236,7 @@ public final class BoutiqueDB: Sendable {
 
   @discardableResult
   public func transaction<T: Sendable>(
-    _ body: @Sendable (inout BoutiqueDBConnection) throws -> T
+    _ body: @Sendable (inout BoutiqueDBConnection) async throws -> T
   ) async throws -> T {
     try await write(body)
   }
@@ -244,7 +249,7 @@ public final class BoutiqueDB: Sendable {
   @discardableResult
   public func writeConcurrent<T: Sendable>(
     maxAttempts: Int = 8,
-    _ body: @Sendable (inout BoutiqueDBConnection) throws -> T
+    _ body: @Sendable (inout BoutiqueDBConnection) async throws -> T
   ) async throws -> T {
     let actor = try await ensureConcurrentActor()
     let value: T
@@ -304,21 +309,21 @@ public final class BoutiqueDB: Sendable {
 
   public func execute(_ sql: String, _ bindings: [TursoValue] = []) async throws {
     try await write { conn in
-      try conn.execute(sql, bindings)
+      try await conn.execute(sql, bindings)
     }
   }
 
   public func fetchAll<T: Table & Sendable>(
     _ table: T.Type
   ) async throws -> [T.QueryOutput] where T == T.QueryOutput {
-    try await read { try $0.fetchAll(table) }
+    try await read { try await $0.fetchAll(table) }
   }
 
   public func fetchOne<T: PrimaryKeyedTable & Sendable>(
     _ table: T.Type,
     key: T.PrimaryKey
   ) async throws -> T.QueryOutput? where T == T.QueryOutput, T.PrimaryKey: Sendable {
-    try await read { try $0.fetchOne(table, key: key) }
+    try await read { try await $0.fetchOne(table, key: key) }
   }
 
   // MARK: - Schema / Turso DDL
@@ -335,7 +340,7 @@ public final class BoutiqueDB: Sendable {
     }
     try await write { connection in
       for sql in statements {
-        try connection.execute(sql)
+        try await connection.execute(sql)
       }
     }
   }

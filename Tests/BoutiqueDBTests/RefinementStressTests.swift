@@ -38,33 +38,33 @@ struct RefinementStressTests {
       startListening: true,
       concurrentWrites: true,
       migrations: plan)
-    defer { db.close() }
+    defer { await db.close() }
 
     let a = LiveQuery(db) { StressNote.all.asSelect() }
     let b = LiveQuery(db) { StressNote.all.asSelect() }
 
     try await db.write { conn in
-      try conn.execute(
+      try await conn.execute(
         "INSERT INTO stressNotes (id, title) VALUES (?, ?)",
         [.text("1"), .text("one")]
       )
     }
     try await db.writeConcurrent { conn in
-      try conn.execute(
+      try await conn.execute(
         "INSERT INTO stressNotes (id, title) VALUES (?, ?)",
         [.text("2"), .text("two")]
       )
     }
 
-    let engine = try TursoCKSyncEngine(
+    let engine = try await TursoCKSyncEngine(
       connection: db.unsafeConnection,
       configuration: TursoCKSyncConfiguration(
         syncedTables: [SyncedTable(name: "stressNotes", columns: ["title"])],
         enablesCloudKit: false
       )
     )
-    try engine.start(automaticallySync: false)
-    _ = try engine.drainCDC()
+    try await engine.start(automaticallySync: false)
+    _ = try await engine.drainCDC()
 
     // Wait for both LiveQueries
     let clock = ContinuousClock()
@@ -75,7 +75,8 @@ struct RefinementStressTests {
     }
     #expect(a.wrappedValue.count >= 2)
     #expect(b.wrappedValue.count >= 2)
-    #expect(!engine.pendingRecordZoneChanges.isEmpty)
+    let pending = await engine.pendingRecordZoneChanges
+    #expect(!pending.isEmpty)
   }
 
   @Test func liveQuerySetQueryReloads() async throws {
@@ -83,8 +84,8 @@ struct RefinementStressTests {
       .appendingPathComponent("lq-\(UUID().uuidString).db")
     defer { try? FileManager.default.removeItem(at: url) }
 
-    let db = try BoutiqueDB(url: url, startListening: false)
-    defer { db.close() }
+    let db = try await BoutiqueDB(url: url, startListening: false)
+    defer { await db.close() }
     try await db.execute(
       """
       CREATE TABLE stressNotes (
@@ -94,7 +95,7 @@ struct RefinementStressTests {
       """
     )
     try await db.write { conn in
-      try conn.execute(
+      try await conn.execute(
         "INSERT INTO stressNotes (id, title) VALUES ('a','alpha'), ('b','beta')"
       )
     }

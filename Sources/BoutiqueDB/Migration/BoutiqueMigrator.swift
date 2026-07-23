@@ -8,7 +8,7 @@ public struct BoutiqueMigration: Sendable {
   let body: Body
 
   enum Body: Sendable {
-    case transactional(@Sendable (inout BoutiqueDBConnection) throws -> Void)
+    case transactional(@Sendable (inout BoutiqueDBConnection) async throws -> Void)
     case asynchronous(@Sendable (BoutiqueDB) async throws -> Void)
   }
 
@@ -16,7 +16,7 @@ public struct BoutiqueMigration: Sendable {
   /// in the same transaction, making this the default form for synchronous work.
   public init(
     _ id: String,
-    migrate: @escaping @Sendable (inout BoutiqueDBConnection) throws -> Void
+    migrate: @escaping @Sendable (inout BoutiqueDBConnection) async throws -> Void
   ) {
     self.id = id
     self.body = .transactional(migrate)
@@ -107,7 +107,7 @@ public struct BoutiqueMigrator: Sendable {
   public func appliedIdentifiers(on db: BoutiqueDB) async throws -> [String] {
     try await prepareTracking(on: db)
     let rows = try await db.read { conn in
-      try conn.query(
+      try await conn.query(
         "SELECT id FROM boutique_schema_migrations ORDER BY rowid ASC"
       )
     }
@@ -153,8 +153,8 @@ public struct BoutiqueMigrator: Sendable {
         switch migration.body {
         case .transactional(let body):
           try await db.write { connection in
-            try body(&connection)
-            try connection.execute(
+            try await body(&connection)
+            try await connection.execute(
               """
               INSERT INTO boutique_schema_migrations (id, applied_at)
               VALUES (?, ?)

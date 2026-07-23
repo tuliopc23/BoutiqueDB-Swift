@@ -24,45 +24,31 @@ actor DatabaseActor {
   }
 
   func read<T: Sendable>(
-    _ body: @Sendable (BoutiqueDBConnection) throws -> T
+    _ body: @Sendable (BoutiqueDBConnection) async throws -> T
   ) async throws -> T {
     try await withExclusive {
       try rejectIfManualTxn()
-      if connection.usesAsyncIO {
-        return try await connection.readAsync { @Sendable in
-          let conn = BoutiqueDBConnection(connection)
-          return try body(conn)
-        }
-      } else {
+      return try await connection.readAsync { @Sendable in
         let conn = BoutiqueDBConnection(connection)
-        return try connection.read {
-          try body(conn)
-        }
+        return try await body(conn)
       }
     }
   }
 
   func write<T: Sendable>(
-    _ body: @Sendable (inout BoutiqueDBConnection) throws -> T
+    _ body: @Sendable (inout BoutiqueDBConnection) async throws -> T
   ) async throws -> T {
     try await withExclusive {
       try rejectIfManualTxn()
-      if connection.usesAsyncIO {
-        return try await connection.writeAsync { @Sendable in
-          var conn = BoutiqueDBConnection(connection)
-          return try body(&conn)
-        }
-      } else {
+      return try await connection.writeAsync { @Sendable in
         var conn = BoutiqueDBConnection(connection)
-        return try connection.write {
-          try body(&conn)
-        }
+        return try await body(&conn)
       }
     }
   }
 
   func transaction<T: Sendable>(
-    _ body: @Sendable (inout BoutiqueDBConnection) throws -> T
+    _ body: @Sendable (inout BoutiqueDBConnection) async throws -> T
   ) async throws -> T {
     try await write(body)
   }
@@ -70,7 +56,7 @@ actor DatabaseActor {
   func writeConcurrent<T: Sendable>(
     maxAttempts: Int,
     baseDelayNanoseconds: UInt64,
-    _ body: @Sendable (inout BoutiqueDBConnection) throws -> T
+    _ body: @Sendable (inout BoutiqueDBConnection) async throws -> T
   ) async throws -> T {
     try await withExclusive {
       try rejectIfManualTxn()
@@ -79,16 +65,9 @@ actor DatabaseActor {
       while true {
         attempt += 1
         do {
-          if connection.usesAsyncIO {
-            return try await connection.writeConcurrentAsync { @Sendable in
-              var conn = BoutiqueDBConnection(connection)
-              return try body(&conn)
-            }
-          } else {
+          return try await connection.writeConcurrentAsync { @Sendable in
             var conn = BoutiqueDBConnection(connection)
-            return try connection.writeConcurrent {
-              try body(&conn)
-            }
+            return try await body(&conn)
           }
         } catch let error as TursoError
           where error.code == TursoError.busy.code && attempt < maxAttempts
@@ -104,7 +83,7 @@ actor DatabaseActor {
   func writeWithBusyRetry<T: Sendable>(
     maxAttempts: Int,
     baseDelayNanoseconds: UInt64,
-    _ body: @Sendable (inout BoutiqueDBConnection) throws -> T
+    _ body: @Sendable (inout BoutiqueDBConnection) async throws -> T
   ) async throws -> T {
     try await withExclusive {
       try rejectIfManualTxn()
@@ -113,16 +92,9 @@ actor DatabaseActor {
       while true {
         attempt += 1
         do {
-          if connection.usesAsyncIO {
-            return try await connection.writeAsync { @Sendable in
-              var conn = BoutiqueDBConnection(connection)
-              return try body(&conn)
-            }
-          } else {
+          return try await connection.writeAsync { @Sendable in
             var conn = BoutiqueDBConnection(connection)
-            return try connection.write {
-              try body(&conn)
-            }
+            return try await body(&conn)
           }
         } catch let error as TursoError
           where error.code == TursoError.busy.code && attempt < maxAttempts
@@ -142,11 +114,7 @@ actor DatabaseActor {
       } else {
         throw BoutiqueError.transactionInProgress
       }
-      if connection.usesAsyncIO {
-        try await connection.executeAsync("BEGIN CONCURRENT")
-      } else {
-        try connection.execute("BEGIN CONCURRENT")
-      }
+      try await connection.executeAsync("BEGIN CONCURRENT")
       manualTransactionState = .active
     }
   }
@@ -157,19 +125,11 @@ actor DatabaseActor {
         throw BoutiqueError.invalidTransactionState("commitConcurrent without beginConcurrent")
       }
       do {
-        if connection.usesAsyncIO {
-          try await connection.executeAsync("COMMIT")
-        } else {
-          try connection.execute("COMMIT")
-        }
+        try await connection.executeAsync("COMMIT")
         manualTransactionState = .idle
       } catch let commitError {
         do {
-          if connection.usesAsyncIO {
-            try await connection.executeAsync("ROLLBACK")
-          } else {
-            try connection.execute("ROLLBACK")
-          }
+          try await connection.executeAsync("ROLLBACK")
           manualTransactionState = .idle
         } catch let rollbackError {
           manualTransactionState = .poisoned(
@@ -190,11 +150,7 @@ actor DatabaseActor {
         throw BoutiqueError.invalidTransactionState("rollbackConcurrent without beginConcurrent")
       }
       do {
-        if connection.usesAsyncIO {
-          try await connection.executeAsync("ROLLBACK")
-        } else {
-          try connection.execute("ROLLBACK")
-        }
+        try await connection.executeAsync("ROLLBACK")
         manualTransactionState = .idle
       } catch {
         manualTransactionState = .poisoned("rollback failed: \(error)")
@@ -205,7 +161,7 @@ actor DatabaseActor {
     }
   }
 
-  private func withExclusive<T: Sendable>(_ body: () async throws -> T) async throws -> T {
+  private func withExclusive<T: Sendable>(_ body: () async throws -> T) async rethrows -> T {
     while exclusiveDepth > 0 {
       await Task.yield()
     }

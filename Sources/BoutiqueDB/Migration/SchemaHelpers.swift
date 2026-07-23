@@ -25,7 +25,7 @@ extension BoutiqueDB {
   /// Whether a user table exists in `sqlite_master`.
   public func tableExists(_ table: String) async throws -> Bool {
     let rows = try await read { conn in
-      try conn.query(
+      try await conn.query(
         """
         SELECT 1 AS ok FROM sqlite_master
         WHERE type = 'table' AND name = ?
@@ -40,7 +40,7 @@ extension BoutiqueDB {
   /// Whether a column exists on `table` (`PRAGMA table_info`).
   public func columnExists(table: String, name: String) async throws -> Bool {
     let rows = try await read { conn in
-      try conn.query("PRAGMA table_info(\(quoteIdent(table)))")
+      try await conn.query("PRAGMA table_info(\(quoteIdent(table)))")
     }
     return rows.contains { row in
       row["name"]?.stringValue == name

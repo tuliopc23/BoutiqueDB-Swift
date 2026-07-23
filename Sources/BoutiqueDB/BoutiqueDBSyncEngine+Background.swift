@@ -80,7 +80,7 @@ extension BoutiqueDBSyncEngine {
   private func performBackgroundTask(_ task: BGTask) {
     task.expirationHandler = { [weak self] in
       Task { @MainActor [weak self] in
-        _ = try? self?.drainCDC()
+        _ = try? await self?.drainCDC()
       }
       task.setTaskCompleted(success: false)
     }
@@ -91,7 +91,7 @@ extension BoutiqueDBSyncEngine {
         return
       }
       do {
-        _ = try self.drainCDC()
+        _ = try await self.drainCDC()
         try await self.syncChanges()
         task.setTaskCompleted(success: true)
       } catch {
@@ -139,7 +139,7 @@ extension BoutiqueDBSyncEngine {
           return
         }
         do {
-          _ = try self.drainCDC()
+          _ = try await self.drainCDC()
           try await self.syncChanges()
           completion(.finished)
         } catch {

@@ -5,8 +5,8 @@ import Foundation
 ///
 /// Open options use `turso_database_config_t`:
 /// `experimental_features`, encryption fields, `async_io`.
-public final class TursoDatabase: @unchecked Sendable {
-  private final class WeakConnection: @unchecked Sendable {
+public final actor TursoDatabase {
+  private final class WeakConnection {
     weak var value: TursoConnection?
 
     init(_ value: TursoConnection) {
@@ -14,9 +14,8 @@ public final class TursoDatabase: @unchecked Sendable {
     }
   }
 
-  public let url: URL
-  public let openOptions: TursoOpenOptions
-  private let lock = NSLock()
+  public nonisolated let url: URL
+  public nonisolated let openOptions: TursoOpenOptions
   private var connections: [ObjectIdentifier: WeakConnection] = [:]
   private var databaseHandle: OpaquePointer?
   private var opened = false
@@ -27,36 +26,26 @@ public final class TursoDatabase: @unchecked Sendable {
     self.openOptions = openOptions
   }
 
-  deinit {
-    close()
-  }
-
   /// Closes every child connection before releasing the native database handle.
   /// Safe to call repeatedly.
-  public func close() {
-    lock.lock()
-    guard !closed else {
-      lock.unlock()
-      return
-    }
+  public func close() async {
+    guard !closed else { return }
     closed = true
     let openConnections = connections.values.compactMap(\.value)
     connections.removeAll()
+    for connection in openConnections {
+      await connection.close()
+    }
     let handle = databaseHandle
     databaseHandle = nil
     opened = false
-    lock.unlock()
-
-    for connection in openConnections {
-      connection.close()
-    }
     if let handle {
       turso_database_deinit(handle)
     }
   }
 
   /// Opens (or creates) the database file and returns a connection.
-  public func connect(enableCDC: Bool = false) throws -> TursoConnection {
+  public func connect(enableCDC: Bool = false) async throws -> TursoConnection {
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(),
       withIntermediateDirectories: true
@@ -68,32 +57,36 @@ public final class TursoDatabase: @unchecked Sendable {
       throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Database handle missing")
     }
 
-    var conn: OpaquePointer?
+    let connectionOut = UnsafeMutablePointer<OpaquePointer?>.allocate(capacity: 1)
+    defer { connectionOut.deallocate() }
+    connectionOut.pointee = nil
     var err: UnsafePointer<CChar>?
-    let st = turso_database_connect(databaseHandle, &conn, &err)
+    let st = turso_database_connect(databaseHandle, connectionOut, &err)
     try TursoError.check(st, error: err)
-    guard let conn else {
+    guard let conn = connectionOut.pointee else {
       throw TursoError(code: Int32(TURSO_ERROR.rawValue), message: "connect returned null")
     }
 
+    // Disconnect the C handle from the database actor's region so it can be
+    // consumed by the new actor-isolated connection.
+    let raw = unsafeBitCast(conn, to: UInt.self)
+    let handle = OpaquePointer(bitPattern: raw)!
     let connection = TursoConnection(
       database: self,
-      handle: conn,
+      handle: handle,
       asyncIO: openOptions.asyncIO
     )
     if enableCDC {
-      try connection.enableCaptureDataChanges(mode: .full)
+      try await connection.enableCaptureDataChanges(mode: .full)
     }
 
-    lock.lock()
+    // Compact stale weak registrations before adding a new one.
+    connections = connections.filter { $0.value.value != nil }
     connections[ObjectIdentifier(connection)] = WeakConnection(connection)
-    lock.unlock()
     return connection
   }
 
   private func ensureOpened() throws {
-    lock.lock()
-    defer { lock.unlock() }
     guard !closed else {
       throw TursoError(code: Int32(TURSO_MISUSE.rawValue), message: "Database is closed")
     }
@@ -141,12 +134,6 @@ public final class TursoDatabase: @unchecked Sendable {
         }
       }
     }
-  }
-
-  func unregister(_ connection: TursoConnection) {
-    lock.lock()
-    connections.removeValue(forKey: ObjectIdentifier(connection))
-    lock.unlock()
   }
 
   public static func applicationSupportURL(filename: String = "app.db") throws -> URL {

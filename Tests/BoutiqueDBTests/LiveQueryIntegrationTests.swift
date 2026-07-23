@@ -46,9 +46,9 @@ struct LiveQueryIntegrationTests {
   @Test func liveQueryUpdatesWithinOneSecond() async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("boutique-int-\(UUID().uuidString).db")
-    let db = try BoutiqueDB(url: url, startListening: true)
+    let db = try await BoutiqueDB(url: url, startListening: true)
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { db.close() }
+    defer { await db.close() }
 
     // Match StructuredQueries default table naming for `IntegrationNote`.
     try await db.execute(
@@ -67,7 +67,7 @@ struct LiveQueryIntegrationTests {
     }
 
     try await db.write { conn in
-      try IntegrationNote.insert {
+      try await IntegrationNote.insert {
         IntegrationNote(id: "i1", title: "SwiftUI", body: "ok")
       }.execute(conn.connection)
     }

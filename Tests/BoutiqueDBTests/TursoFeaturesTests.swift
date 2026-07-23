@@ -8,10 +8,10 @@ import TursoKit
 @Suite("Turso-exclusive features")
 @MainActor
 struct TursoFeaturesTests {
-  private func tempDB(concurrentWrites: Bool = false) throws -> BoutiqueDB {
+  private func tempDB(concurrentWrites: Bool = false) async throws -> BoutiqueDB {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("turso-feat-\(UUID().uuidString).db")
-    return try BoutiqueDB(
+    return try await BoutiqueDB(
       url: url,
       startListening: false,
       concurrentWrites: concurrentWrites
@@ -25,7 +25,7 @@ struct TursoFeaturesTests {
   }
 
   @Test func vectorDistanceSQLBuilds() async throws {
-    let db = try tempDB()
+    let db = try await tempDB()
     defer { try? FileManager.default.removeItem(at: db.url) }
 
     try await db.execute(
@@ -44,7 +44,7 @@ struct TursoFeaturesTests {
 
     let query = Vector32([1.0, 0.0])
     let rows = try await db.read { conn in
-      try conn.query(
+      try await conn.query(
         """
         SELECT id, vector_distance_cos(embedding, vector32(?)) AS d
         FROM docs
@@ -67,11 +67,11 @@ struct TursoFeaturesTests {
       .appendingPathComponent("enc-\(UUID().uuidString).db")
     defer { try? FileManager.default.removeItem(at: url) }
     // 32-byte key for aegis256 (hex-encoded by BoutiqueDB).
-    let db = try BoutiqueDB(
+    let db = try await BoutiqueDB(
       url: url,
       startListening: false,
       encryption: .aegis256(key: Data(repeating: 0xAB, count: 32)))
-    defer { db.close() }
+    defer { await db.close() }
     try await db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
   }
 
@@ -80,21 +80,21 @@ struct TursoFeaturesTests {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("mp-\(UUID().uuidString).db")
     defer { try? FileManager.default.removeItem(at: url) }
-    let db = try BoutiqueDB(url: url, startListening: false, multiProcess: true)
-    defer { db.close() }
+    let db = try await BoutiqueDB(url: url, startListening: false, multiProcess: true)
+    defer { await db.close() }
     try await db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
   }
 
-  @Test func cdcAndMVCCSameHandleRejected() {
+  @Test func cdcAndMVCCSameHandleRejected() async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("both-\(UUID().uuidString).db")
-    #expect(throws: BoutiqueError.cdcMutuallyExclusiveWithMVCC) {
-      _ = try BoutiqueDB(url: url, enableCDC: true, enableMVCC: true)
+    await #expect(throws: BoutiqueError.cdcMutuallyExclusiveWithMVCC) {
+      _ = try await BoutiqueDB(url: url, enableCDC: true, enableMVCC: true)
     }
   }
 
   @Test func writeConcurrentDualConnection() async throws {
-    let db = try tempDB(concurrentWrites: true)
+    let db = try await tempDB(concurrentWrites: true)
     defer { try? FileManager.default.removeItem(at: db.url) }
 
     try await db.execute(
@@ -108,14 +108,14 @@ struct TursoFeaturesTests {
 
     // Lazy MVCC connection opens after schema exists (BD-005 dual-connection path).
     try await db.writeConcurrent { conn in
-      try conn.execute(
+      try await conn.execute(
         "INSERT INTO notes (id, title) VALUES (?, ?)",
         [.text("c1"), .text("hello")]
       )
     }
 
     let count = try await db.read { conn in
-      try conn.query("SELECT COUNT(*) AS c FROM notes").first?["c"]?.int64Value
+      try await conn.query("SELECT COUNT(*) AS c FROM notes").first?["c"]?.int64Value
     }
     #expect(count == 1)
     #expect(db.store.generation >= 1)
@@ -134,7 +134,7 @@ struct TursoFeaturesTests {
   }
 
   @Test func ftsIndexCreateGatedByCapability() async throws {
-    let db = try tempDB()
+    let db = try await tempDB()
     defer { try? FileManager.default.removeItem(at: db.url) }
 
     try await db.execute("CREATE TABLE notes (id TEXT PRIMARY KEY, title TEXT, body TEXT)")

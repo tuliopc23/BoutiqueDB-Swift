@@ -38,9 +38,9 @@ struct SchemaDDLTests {
   @Test func createAppliesTableDescriptor() async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("schema-\(UUID().uuidString).db")
-    let db = try BoutiqueDB(url: url, startListening: false)
+    let db = try await BoutiqueDB(url: url, startListening: false)
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { db.close() }
+    defer { await db.close() }
 
     let table = BoutiqueTableDescriptor(
       name: "items",
@@ -50,17 +50,17 @@ struct SchemaDDLTests {
     try await db.execute(table.ddl)
 
     let rows = try await db.read { conn in
-      try conn.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'items'")
+      try await conn.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'items'")
     }
     #expect(rows.count == 1)
   }
 
-  @Test func capabilitiesProbeDoesNotThrow() throws {
+  @Test func capabilitiesProbeDoesNotThrow() async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("cap-\(UUID().uuidString).db")
-    let db = try BoutiqueDB(url: url, startListening: false)
+    let db = try await BoutiqueDB(url: url, startListening: false)
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { db.close() }
+    defer { await db.close() }
 
     // CDC path always available through our open path.
     #expect(db.capabilities.cdc)
@@ -69,13 +69,13 @@ struct SchemaDDLTests {
   @Test func createSchemaTypeWithManualConformance() async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("schema2-\(UUID().uuidString).db")
-    let db = try BoutiqueDB(url: url, startListening: false)
+    let db = try await BoutiqueDB(url: url, startListening: false)
     defer { try? FileManager.default.removeItem(at: url) }
-    defer { db.close() }
+    defer { await db.close() }
 
     try await db.create(ManualNoteSchema.self)
     let rows = try await db.read { conn in
-      try conn.query("SELECT name FROM sqlite_master WHERE name = 'manual_notes'")
+      try await conn.query("SELECT name FROM sqlite_master WHERE name = 'manual_notes'")
     }
     #expect(rows.count == 1)
   }

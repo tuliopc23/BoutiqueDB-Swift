@@ -10,20 +10,20 @@ enum RowSQL {
     connection: TursoConnection,
     table: SyncedTable,
     rowPK: String
-  ) throws -> [String: TursoValue]? {
+  ) async throws -> [String: TursoValue]? {
     let sql = """
       SELECT * FROM \(quoteIdent(table.name))
       WHERE \(quoteIdent(table.primaryKeyColumn)) = ?
       LIMIT 1
       """
-    return try connection.queryOne(sql, [.text(rowPK)])
+    return try await connection.queryOne(sql, [.text(rowPK)])
   }
 
   static func upsert(
     connection: TursoConnection,
     table: SyncedTable,
     row: [String: TursoValue]
-  ) throws {
+  ) async throws {
     guard let pk = row[table.primaryKeyColumn] else {
       throw TursoError(code: -1, message: "Missing primary key for \(table.name)")
     }
@@ -58,27 +58,27 @@ enum RowSQL {
 
     let bindings = columns.map { row[$0] ?? .null }
     _ = pk
-    try connection.execute(sql, bindings)
+    try await connection.execute(sql, bindings)
   }
 
   static func delete(
     connection: TursoConnection,
     table: SyncedTable,
     rowPK: String
-  ) throws {
+  ) async throws {
     let sql = """
       DELETE FROM \(quoteIdent(table.name))
       WHERE \(quoteIdent(table.primaryKeyColumn)) = ?
       """
-    try connection.execute(sql, [.text(rowPK)])
+    try await connection.execute(sql, [.text(rowPK)])
   }
 
   static func deleteAllSyncedData(
     connection: TursoConnection,
     tables: [SyncedTable]
-  ) throws {
+  ) async throws {
     for table in tables {
-      try connection.execute("DELETE FROM \(quoteIdent(table.name))")
+      try await connection.execute("DELETE FROM \(quoteIdent(table.name))")
     }
   }
 }

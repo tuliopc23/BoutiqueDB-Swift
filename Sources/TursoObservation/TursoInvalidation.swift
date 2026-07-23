@@ -36,10 +36,10 @@ public final class TursoStore {
   public init(
     connection: TursoConnection,
     idlePollInterval: Duration = .milliseconds(250)
-  ) {
+  ) async throws {
     self.connection = connection
     self.idlePollInterval = idlePollInterval
-    self.lastChangeID = (try? Self.maxChangeID(on: connection)) ?? 0
+    self.lastChangeID = try await Self.maxChangeID(on: connection)
   }
 
   deinit {
@@ -81,7 +81,7 @@ public final class TursoStore {
     listenerTask = Task.detached(priority: .utility) { [weak self] in
       while !Task.isCancelled {
         do {
-          let maxID = try Self.maxChangeID(on: connection)
+          let maxID = try await Self.maxChangeID(on: connection)
           if maxID > last {
             last = maxID
             await MainActor.run { [weak self] in
@@ -113,9 +113,9 @@ public final class TursoStore {
 
   /// Advances from CDC once and invalidates if new rows appeared.
   /// Useful for tests that drive a single connection without waiting on the listener.
-  public func advanceFromCDC() {
+  public func advanceFromCDC() async {
     do {
-      let maxID = try Self.maxChangeID(on: connection)
+      let maxID = try await Self.maxChangeID(on: connection)
       listenerError = nil
       if maxID > lastChangeID {
         lastChangeID = maxID
@@ -126,9 +126,15 @@ public final class TursoStore {
     }
   }
 
-  private nonisolated static func maxChangeID(on connection: TursoConnection) throws -> Int64 {
-    try connection.queryOne("SELECT COALESCE(MAX(change_id), 0) AS m FROM turso_cdc")?["m"]?
-      .int64Value ?? 0
+  private nonisolated static func maxChangeID(on connection: TursoConnection) async throws -> Int64 {
+    do {
+      return (try await connection.queryOne(
+        "SELECT COALESCE(MAX(change_id), 0) AS m FROM turso_cdc"
+      ))?["m"]?
+        .int64Value ?? 0
+    } catch let error as TursoError where error.message.contains("no such table: turso_cdc") {
+      return 0
+    }
   }
 }
 
@@ -141,11 +147,11 @@ public final class TursoQueryBox<Value> {
   public private(set) var fetchError: String?
 
   private let store: TursoStore
-  private let fetch: () throws -> Value
+  private let fetch: () async throws -> Value
   private var lastGeneration: UInt64
   @ObservationIgnored nonisolated(unsafe) private var observationTask: Task<Void, Never>?
 
-  public init(store: TursoStore, initial: Value, fetch: @escaping () throws -> Value) {
+  public init(store: TursoStore, initial: Value, fetch: @escaping () async throws -> Value) {
     self.store = store
     self.fetch = fetch
     self.value = initial
@@ -159,13 +165,13 @@ public final class TursoQueryBox<Value> {
 
   public func refreshIfNeeded() {
     guard store.generation != lastGeneration else { return }
-    forceRefresh()
+    Task { await forceRefresh() }
   }
 
-  public func forceRefresh() {
+  public func forceRefresh() async {
     lastGeneration = store.generation
     do {
-      let next = try fetch()
+      let next = try await fetch()
       value = next
       fetchError = nil
     } catch {
@@ -177,7 +183,7 @@ public final class TursoQueryBox<Value> {
     observationTask = Task { [weak self] in
       guard let self else { return }
       for await _ in self.store.subscribe() {
-        self.forceRefresh()
+        await self.forceRefresh()
       }
     }
   }
