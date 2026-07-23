@@ -41,4 +41,15 @@ Before releasing new versions or tagging releases for the **Swift Package Index 
     xcodebuild -scheme BoutiqueDB-Package -destination 'platform=iOS Simulator,name=iPhone 16' build
     ```
   </Step>
+
+  <Step title="Public Repository & SPI Claim">
+    The repo must be public before SPI can index it. Add it at
+    https://swiftpackageindex.com/add-a-package with the GitHub URL.
+  </Step>
+
+  <Step title="GitHub Actions Billing">
+    Confirm GitHub Actions billing is unlocked (`.github/workflows/swift.yml`).
+    If builds fail immediately with a billing/lock message, resolve it in
+    repository settings before release.
+  </Step>
 </Steps>
