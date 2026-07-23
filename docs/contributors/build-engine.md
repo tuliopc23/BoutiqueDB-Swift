@@ -1,61 +1,42 @@
-# Build the engine
+---
+title: "Building the Engine"
+sidebarTitle: "Building the Engine"
+description: "Instructions for building the Rust engine binary (libturso_sdk_kit) and multi-arch XCFramework."
+---
 
-The Swift package consumes a prebuilt `TursoSDK.xcframework` by default. To iterate on the engine itself, build from the `BoutiqueDB` source.
+While consumer developers integrate BoutiqueDB as a precompiled Swift package, contributors modifying the underlying Rust engine can rebuild `TursoSDK.xcframework` using provided build scripts.
 
-## Repository layout
+---
 
-- `BoutiqueDB` — engine monorepo (this repo’s sibling).
-- `BoutiqueDB-Swift` — Swift package.
+## Prerequisites
 
-The Swift package’s `TURSO_SRC` defaults to `../BoutiqueDB`.
+- macOS 14.0+ with Xcode 15+
+- Rust toolchain (`rustup` with `aarch64-apple-darwin`, `x86_64-apple-darwin`, `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios` targets installed).
 
-## Build the sdk-kit static library
+---
 
-```bash
-cd ../BoutiqueDB
-cargo build -p turso_sdk_kit --release
-```
+## Build Execution
 
-For optional features, enable Cargo features:
-
-```bash
-TURSO_SDK_FEATURES=fts,encryption ./Scripts/build-turso-sdk-kit.sh
-```
-
-## Build the xcframework
-
-From the Swift package checkout:
+Run the universal multi-arch packaging script from the repository root:
 
 ```bash
+# Build XCFramework containing macOS and iOS (Device + Simulator) slices
 ./Scripts/build-turso-sdk-xcframework.sh
 ```
 
-This builds the full multi-arch set by default:
+<Note>
+**Local Single-Slice Debugging**: For faster iteration during local debugging on Apple Silicon Macs, build a single slice using `SLICES=macos-arm64 ./Scripts/build-turso-sdk-xcframework.sh`.
+</Note>
 
-- `macos-arm64_x86_64`
-- `ios-arm64`
-- `ios-arm64_x86_64-simulator`
+---
 
-Use `SLICES=macos-arm64` only for local debugging.
+## Verification & Checksum Update
 
-## Test with the local binary
-
-```bash
-BOUTIQUE_LOCAL_TURSO_SDK=1 swift test
-```
-
-## Engine test gates
-
-Before integrating a new engine build, run the upstream engine test suites in the `BoutiqueDB` repo:
-
-```bash
-cargo test
-make test
-make -C sqlite/conformance run-rust ARGS='--snapshot-filter __never__'
-```
-
-See `BoutiqueDB/AGENTS.md` for full engine contribution guidelines.
-
-## Clean up
-
-`Vendor/TursoSDK.xcframework` is gitignored. Remove it or rebuild as needed. Never commit multi-hundred-megabyte binaries.
+1. Verify XCFramework architecture slices:
+   ```bash
+   lipo -info Vendor/TursoSDK.xcframework/macos-arm64_x86_64/libturso_sdk_kit.a
+   ```
+2. Recompute zip checksum for `Package.swift`:
+   ```bash
+   swift package compute-checksum Vendor/TursoSDK.xcframework.zip
+   ```

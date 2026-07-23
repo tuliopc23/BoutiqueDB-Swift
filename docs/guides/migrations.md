@@ -1,101 +1,92 @@
-# Migrations
+---
+title: "Schema Migrations"
+sidebarTitle: "Migrations"
+description: "Safely evolve your SQLite database schema using append-only, versioned BoutiqueDB migrations."
+---
 
-BoutiqueDB follows the same production rules as **SQLiteData / GRDB**:
+As your application evolves, your underlying database tables must adapt safely without causing data loss for existing users. BoutiqueDB provides an append-only, version-controlled migration system.
 
-1. Migrations are **named, ordered, and append-only**.
-2. Applied IDs live in `boutique_schema_migrations`.
-3. **Never edit** a migration body after it has shipped.
-4. Prefer typed helpers (`create`, `ensureColumn`) over ad-hoc SQL when possible.
-5. Optional **additive-only** schema sync is for DEBUG / careful opt-in — not silent full auto-migrate.
-6. The default synchronous closure is atomic with its tracking record. Use the explicitly labeled `asynchronous:` form only when suspension is unavoidable; asynchronous bodies must be idempotent because they cannot hold one native transaction across arbitrary suspension.
+---
 
-## Seamless open
+## Creating a Migration Plan
 
-```swift
-let db = try await BoutiqueDB.open(
-  url: try BoutiqueDB.applicationSupportURL(),
-  concurrentWrites: true,
-  migrations: AppMigrations.plan,
-  schemaModels: [],           // optional BoutiqueSchema types
-  schemaSync: .off            // or .additiveOnly in DEBUG
-)
-```
+Define your migration steps in a `MigrationPlan`. Migrations are identified by unique string identifiers (e.g. `"v1_initial_schema"`, `"v2_add_avatar_url"`).
 
-## Defining a plan
+<Steps>
+  <Step title="Define Version 1 Initial Schema">
+    Create initial tables when the app is first launched.
 
-```swift
-enum AppMigrations {
-  static let plan = BoutiqueMigrationPlan(
-    eraseDatabaseOnSchemaChange: false  // true only in DEBUG if you want GRDB-style erase
-  ) {
-    BoutiqueMigration("v1_create_notes") { connection in
-      for statement in Note.boutiqueCreateStatements {
-        try connection.execute(statement)
-      }
+    ```swift Migrations.swift
+    import BoutiqueDB
+
+    enum AppMigrations {
+        static let plan = MigrationPlan([
+            Migration("v1_create_users") { conn in
+                try conn.execute("""
+                    CREATE TABLE user_profile (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        username TEXT NOT NULL UNIQUE,
+                        createdAt REAL NOT NULL
+                    )
+                """)
+            }
+        ])
     }
-    BoutiqueMigration("v2_add_updated_at") { connection in
-      try connection.execute(
-        "ALTER TABLE notes ADD COLUMN updatedAt TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'"
-      )
+    ```
+  </Step>
+
+  <Step title="Add Version 2 Migration Step">
+    When adding new features in a app update, append a new migration step to the end of the array.
+
+    ```swift Migrations.swift
+    enum AppMigrations {
+        static let plan = MigrationPlan([
+            Migration("v1_create_users") { conn in
+                try conn.execute("""
+                    CREATE TABLE user_profile (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        username TEXT NOT NULL UNIQUE,
+                        createdAt REAL NOT NULL
+                    )
+                """)
+            },
+            
+            Migration("v2_add_avatar_and_bio") { conn in
+                try conn.execute("""
+                    ALTER TABLE user_profile ADD COLUMN avatarUrl TEXT;
+                    ALTER TABLE user_profile ADD COLUMN bio TEXT DEFAULT '';
+                """)
+            }
+        ])
     }
-    BoutiqueMigration("v3_seed_defaults") { connection in
-      try connection.execute(
-        "INSERT OR IGNORE INTO notes (id, title, body, updatedAt) VALUES (?, ?, ?, ?)",
-        [.text("default"), .text("Welcome"), .text("Getting started"), .text(TursoDateFormatting.string(from: Date()))]
-      )
-    }
-  }
-}
-```
+    ```
+  </Step>
 
-## Additive columns
+  <Step title="Pass Migration Plan to Database Initialization">
+    Pass the plan into `BoutiqueDB.open`:
 
-```swift
-try await db.ensureColumn(
-  table: "notes",
-  name: "tag",
-  sqlType: "TEXT",
-  default: "''"
-)
-```
+    ```swift AppStore.swift
+    let db = try await BoutiqueDB.open(
+        url: storeURL,
+        migrations: AppMigrations.plan
+    )
+    ```
+  </Step>
+</Steps>
 
-`ensureColumn` runs `ALTER TABLE ADD COLUMN IF NOT EXISTS`. It is idempotent and safe in migrations.
+---
 
-## Asynchronous migrations
+## Migration Safety & Transactions
 
-Use only when you must `await` something (network, CloudKit, user consent):
+<CardGroup cols={2}>
+  <Card title="Transactional Execution" icon="lock">
+    All steps within a single `Migration` run inside a dedicated SQLite transaction. If a statement fails, changes are completely rolled back.
+  </Card>
+  <Card title="Internal Bookkeeping" icon="book">
+    BoutiqueDB tracks executed migration IDs in a system table (`_boutiquedb_migrations`). Executed migrations are never re-run.
+  </Card>
+</CardGroup>
 
-```swift
-BoutiqueMigration("v4_backfill_from_cloud") { db in
-  try await BackfillService.shared.fillNotes(into: db)
-}
-```
-
-Asynchronous migrations commit the tracking record separately, so the body must be idempotent.
-
-## Helpers
-
-| API | Use |
-|---|---|
-| `db.create(Schema.self)` | Run macro/schema DDL (tables, FTS, vector, MV) |
-| `db.createFTSIndex(_:)` | Create a Turso Tantivy index |
-| `db.createVectorIndex(_:)` | Create a Turso vector index |
-| `db.createMaterializedView(_:)` | Create an incremental materialized view |
-| `db.ensureColumn(...)` | Safe additive column |
-| `db.syncSchema(models, policy: .additiveOnly)` | Create missing IF NOT EXISTS tables/indexes; also `ensureColumn` |
-
-## What “auto” means here
-
-| Allowed automatically (opt-in) | Never automatic |
-|---|---|
-| `CREATE TABLE/INDEX IF NOT EXISTS` via schema sync | DROP COLUMN / DROP TABLE |
-| `ensureColumn` when you call it in a migration | Silent rename |
-|  | Type changes |
-
-Full model-diff auto-migration is **not** the default — it is how production data gets corrupted. Use explicit migrations for renames and data backfills.
-
-## Turso features in migrations
-
-Put FTS / vector / materialized view DDL in a migration (via `create` / `createFTSIndex` / macros). Gate on `db.capabilities` if the vendored lib may lack experimental flags.
-
-See [Best practices](../best-practices) and [Turso features in Apple apps](../turso-features-in-apple-apps) for more.
+<Warning>
+**Never Remove or Reorder Migrations**: Migrations are strictly append-only. Never modify or delete previously shipped migration IDs once an app version has been released to users!
+</Warning>

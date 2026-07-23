@@ -1,60 +1,43 @@
-# BoutiqueDB Architecture
+---
+title: "BoutiqueDB Architecture"
+sidebarTitle: "Architecture"
+description: "Deep dive into BoutiqueDB target modules, swift-structured-queries driver integration, and DatabaseActor thread isolation."
+---
 
-<p align="center">
-  <img src="../Assets/BoutiqueDB.png" alt="BoutiqueDB" width="96" height="96" />
-</p>
+`BoutiqueDB` is organized into focused Swift targets, balancing SQLite-compatible C APIs with high-level Swift ergonomics.
 
-## Layers
+---
+
+## Target Layer Architecture
 
 ```
-SwiftUI / @Observable models
-        │
-        ▼
-BoutiqueDB (@MainActor)          ← open + migrate + LiveQuery host
-   ├── DatabaseActor             ← serialized I/O (reads/writes)
-   ├── concurrent DatabaseActor  ← optional MVCC writer (CDC ⊥ MVCC)
-   ├── TursoStore                ← AsyncStream / generation invalidation
-   └── SyncAdapter               ← CloudKit (default) or future adapters
-        │
-        ▼
-TursoKit → CTursoSDK → libturso_sdk_kit (sdk-kit)
+BoutiqueDB/
+├── Package.swift
+├── Sources/
+│   ├── BoutiqueDB/                     # Main public framework API & DatabaseActor
+│   ├── TursoKit/                       # Native C ABI handles, Statement execution, CDC
+│   ├── StructuredQueriesTurso/         # StructuredQueries driver integration
+│   ├── TursoCKSync/                    # CKSyncEngine CloudKit synchronizer
+│   └── TursoObservation/               # CDC change token invalidation engine
+└── Vendor/
+    └── TursoSDK.xcframework            # Prebuilt libturso_sdk_kit multi-arch binary
 ```
 
-## Concurrency rules (BD-014 / BD-005)
+---
 
-| Rule | Detail |
-|---|---|
-| UI container | `BoutiqueDB` is `@MainActor` — safe for SwiftUI |
-| SQLite I/O | Always hop to `DatabaseActor` via `read` / `write` / `writeConcurrent` |
-| CDC vs MVCC | Never enable both on one **primary** handle for same-handle MVCC+CDC init. Dual-handle `concurrentWrites` tries MVCC+CDC on the writer; if the engine rejects that, **falls back to busy-retry IMMEDIATE on the primary CDC connection** so `turso_cdc` is never silent |
-| LiveQuery | Subscribes to `store.subscribe()`; local writes call `invalidate()` immediately. CDC poll is cooperative (~50 ms idle), not a push stream |
-| Sync | Attach `BoutiqueDBSyncEngine.attach(to:)` so `onLocalCommit` auto-drains; manual `drainCDC` remains available |
-| Connection escape | Prefer public APIs; `unsafeConnection` only for sync attachment / advanced use |
+## Component Responsibilities
 
-**Do not** call MainActor-isolated `BoutiqueDB` methods from inside a `DatabaseActor` body (deadlock risk).
-
-## Feature map
-
-| Concern | Doc / type |
-|---|---|
-| Migrations | [Migrations](../guides/migrations.md), `BoutiqueMigrationPlan` |
-| Observation | `LiveQuery`, `TursoStore` |
-| Turso FTS / vector | `@FTSIndex`, `@VectorIndex`, `vectorDistance*`, `.match` |
-| CloudKit | [CloudKit QA](cloudkit-qa-checklist.md), `CloudKitSyncAdapter` |
-| Capabilities | `TursoCapabilities.probe` |
-| Benchmarks | [Sync benchmarks](sync-benchmarks.md) |
-
-## Module products
-
-| Product | Responsibility |
-|---|---|
-| `BoutiqueDB` | High-level API, macros client, migrations, dependencies key |
-| `TursoKit` | Connections, statements, values |
-| `StructuredQueriesTurso` | StructuredQueries driver + Turso DSL |
-| `TursoCKSync` | CDC ↔ CKSyncEngine |
-| `TursoObservation` | Change streams |
-| `BoutiqueDBMacros` | Compiler plugin |
-
-## Packaging note
-
-Local SPM builds may link `libturso_sqlite3` via `Vendor/turso`. SPI-oriented binary packaging is tracked under refinement **R2**.
+<CardGroup cols={2}>
+  <Card title="BoutiqueDB Target" icon="cubes">
+    Public API umbrella containing `BoutiqueDB`, `@LiveQuery`, `@LiveQueryOne`, and `@BoutiqueTable` macro wrappers.
+  </Card>
+  <Card title="StructuredQueriesTurso" icon="magnifying-glass">
+    Swift driver mapping `StructuredQueries` expressions (`@Table`) to Turso SQLite database connections.
+  </Card>
+  <Card title="TursoObservation" icon="bolt">
+    Monitors `turso_cdc` table change counters and dispatches change token invalidations to active subscriber queries.
+  </Card>
+  <Card title="TursoCKSync" icon="cloud">
+    Serializes changed CDC rows into CloudKit `CKRecord` structures for `CKSyncEngine` processing.
+  </Card>
+</CardGroup>

@@ -1,45 +1,44 @@
-# SPI checklist
+---
+title: "Swift Package Index (SPI) Checklist"
+sidebarTitle: "SPI Checklist"
+description: "Validation requirements for publishing BoutiqueDB-Swift to the Swift Package Index."
+---
 
-This checklist ensures BoutiqueDB can be indexed and built by the Swift Package Index and submitted to the App Store.
+Before releasing new versions or tagging releases for the **Swift Package Index (SPI)**, verify that all packaging requirements pass.
 
-## Package manifest
+---
 
-- [ ] `Package.swift` has no `unsafeFlags`.
-- [ ] `Package.swift` uses a `binaryTarget` for `TursoSDK` (URL or local path).
-- [ ] `Package.swift` products are declared for `BoutiqueDB`, `TursoKit`, `StructuredQueriesTurso`, `TursoCKSync`, and `TursoObservation`.
-- [ ] `Package.swift` declares `swift-tools-version:6.1` or later.
-- [ ] `Package.swift` checksum matches the published `TursoSDK.xcframework.zip`.
+## Validation Checklist
 
-## Repository
+<Steps>
+  <Step title="No Unsafe Linker Flags">
+    Ensure `Package.swift` contains no `unsafeFlags` or local hardcoded path linkers. Multi-arch binaries must use `binaryTarget(name: "TursoSDK", url: ..., checksum: ...)`.
+  </Step>
 
-- [ ] Public GitHub repository.
-- [ ] `LICENSE` file (MIT).
-- [ ] `README.md` with install URL and platform badges.
-- [ ] `.spi.yml` includes `macos-xcodebuild` and `ios` platform targets.
+  <Step title="Verify `.spi.yml` Targets">
+    Check that `.spi.yml` builds both macOS and iOS targets:
 
-## Binary
+    ```yaml .spi.yml
+    version: 1
+    builder:
+      configs:
+        - platform: macos-xcodebuild
+        - platform: ios
+    ```
+  </Step>
 
-- [ ] `TursoSDK.xcframework.zip` on the matching GitHub Release.
-- [ ] macOS universal slice (arm64 + x86_64).
-- [ ] iOS device arm64 slice.
-- [ ] iOS Simulator universal slice (arm64 + x86_64).
-- [ ] Clean clone builds on macOS without local `Vendor/TursoSDK.xcframework`.
-- [ ] iOS destination build succeeds (`xcodebuild` or `swift build` with iOS SDK).
+  <Step title="Verify Multi-Arch XCFramework Slices">
+    Run `lipo` inspection to ensure universal binaries are included:
+    - `macos-arm64` + `macos-x86_64`
+    - `ios-arm64`
+    - `ios-arm64-simulator` + `ios-x86_64-simulator`
+  </Step>
 
-## Validation commands
+  <Step title="Clean Environment Xcode Build Test">
+    Verify that clean machine clones resolve and build successfully:
 
-```bash
-swift build
-xcodebuild -scheme BoutiqueDB-Package \
-  -destination 'platform=iOS Simulator,name=iPhone 16' \
-  -skipPackagePluginValidation -skipMacroValidation \
-  ONLY_ACTIVE_ARCH=YES ARCHS=arm64 build
-```
-
-## App Store
-
-- [ ] No `unsafeFlags`.
-- [ ] No embedded multi-arch `.a` files committed to git.
-- [ ] Binary slices are correct for the target platform.
-
-See also [Multi-arch packaging](multi-arch-packaging) and [Publishing](publishing).
+    ```bash
+    xcodebuild -scheme BoutiqueDB-Package -destination 'platform=iOS Simulator,name=iPhone 16' build
+    ```
+  </Step>
+</Steps>

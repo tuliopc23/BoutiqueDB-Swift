@@ -1,64 +1,130 @@
-# BoutiqueDB
+---
+title: "BoutiqueDB for Swift"
+sidebarTitle: "Overview"
+description: "Local-first persistence for iOS and macOS built on the Turso database engine with CloudKit sync, CDC live queries, and modern Swift concurrency."
+---
 
-BoutiqueDB is a local-first Swift persistence framework built on the [Turso](https://github.com/tursodatabase/turso) database engine. It gives you SQLiteData-style ergonomics, CDC-backed live queries, CloudKit synchronization, and opt-in access to Turso-only features such as full-text search, vector search, materialized views, and concurrent writes.
+<p align="center">
+  <img src="/logo/light.png" alt="BoutiqueDB Logo" width="160" />
+</p>
 
-```swift
+## Modern Swift Persistence for Apple Platforms
+
+**BoutiqueDB** brings SQLiteData ergonomics, Change Data Capture (CDC) live queries, and opportunistic CloudKit sync to Swift developers. Built on top of the native Rust **Turso engine** via `sdk-kit`, it empowers your Apple apps with local-first reliability and opt-in Turso capabilities like full-text search, vector embeddings, and concurrent writes.
+
+<CardGroup cols={2}>
+  <Card title="Local-First Engine" icon="database" href="/core-concepts">
+    SQLite-compatible local storage running directly inside the app sandbox with `@MainActor` thread safety.
+  </Card>
+  <Card title="Reactive CDC Live Queries" icon="bolt" href="/guides/live-queries">
+    UI components update automatically with `@LiveQuery` and `@LiveQueryOne` via change tokens.
+  </Card>
+  <Card title="CloudKit Synchronization" icon="cloud-arrow-up" href="/guides/cloudkit-sync">
+    Zero-backend private database sync using Apple's native `CKSyncEngine`.
+  </Card>
+  <Card title="Turso Superpowers" icon="wand-magic-sparkles" href="/turso-features-in-apple-apps">
+    Opt-in access to Tantivy FTS, dense/sparse vector search, IVM materialized views, and AEGIS encryption.
+  </Card>
+</CardGroup>
+
+---
+
+## Quick Example
+
+Define your `@Table` model, initialize the database actor, and run reactive queries inside SwiftUI:
+
+<CodeGroup>
+```swift Model.swift
 import BoutiqueDB
 import StructuredQueries
 
-let db = try await BoutiqueDB.open(
-  url: BoutiqueDB.applicationSupportURL(),
-  migrations: AppMigrations.plan
-)
-
-try await db.write { conn in
-  try Note.insert { Note(id: UUID(), title: "Hello", body: "") }
-    .execute(conn.connection)
+@Table
+struct Note {
+    @Column(primaryKey: true) let id: UUID
+    var title: String
+    var body: String
+    var createdAt: Date
 }
-
-let rows = try await db.fetchAll(Note.self)
 ```
 
-## What BoutiqueDB is
+```swift App.swift
+import SwiftUI
+import BoutiqueDB
 
-BoutiqueDB is designed for Apple apps that need:
+@main
+struct NotesApp: App {
+    let db: BoutiqueDB
+    
+    init() {
+        self.db = try! BoutiqueDB.open(
+            url: BoutiqueDB.applicationSupportURL(),
+            migrations: AppMigrations.plan
+        )
+    }
+    
+    var body: some Scene {
+        WindowGroup {
+            ContentView(db: db)
+        }
+    }
+}
+```
 
-- **Reliable local persistence** with a SQLite-compatible file format.
-- **Modern Swift concurrency** (`async`/`await`, `Actor`, `Sendable`).
-- **Reactive UI updates** through `LiveQuery` and `LiveQueryOne`.
-- **CloudKit sync** via `CKSyncEngine` without maintaining a separate backend.
-- **Optional Turso engine features** such as FTS, vector indexes, materialized views, and `BEGIN CONCURRENT`.
+```swift ContentView.swift
+import SwiftUI
+import BoutiqueDB
+import StructuredQueries
 
-It is not a hosted database service. Your data lives in the app sandbox and can sync through CloudKit or a future adapter.
+struct ContentView: View {
+    let db: BoutiqueDB
+    
+    @ObservationIgnored
+    @LiveQuery var notes: [Note]
+    
+    init(db: BoutiqueDB) {
+        self.db = db
+        self._notes = LiveQuery(db) { Note.order { $0.title }.asSelect() }
+    }
+    
+    var body: some View {
+        List(notes, id: \.id) { note in
+            VStack(alignment: .leading) {
+                Text(note.title).font(.headline)
+                Text(note.body).font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+```
+</CodeGroup>
 
-## Core principles
+---
 
-1. **Local-first.** The database file is authoritative. Sync is asynchronous and opportunistic.
-2. **Swift-native.** Use `async`/`await`, `@Observable`, `@Table`, and property wrappers.
-3. **Explicit is better than implicit.** Migrations are append-only and named. Schema sync is additive-only and opt-in.
-4. **Turso features are opt-in.** Experimental engine flags are enabled through `TursoOpenOptions`, not forced on every open.
-5. **Concurrency safety.** `BoutiqueDB` is `@MainActor`; all engine I/O runs on a `DatabaseActor`.
+## Key Capabilities
 
-## Capability matrix
+| Feature | Status | Description |
+| :--- | :---: | :--- |
+| **Local CRUD** | <Check /> Ready | Type-safe model queries via `StructuredQueries` |
+| **`LiveQuery` & `LiveQueryOne`** | <Check /> Ready | CDC-backed observation (< 250ms refresh latency) |
+| **Concurrent Writes** | <Check /> Ready | Transaction busy-retry or MVCC `BEGIN CONCURRENT` |
+| **CloudKit Sync** | <Check /> Beta | Private database sync via `CKSyncEngine` |
+| **Migrations** | <Check /> Ready | Append-only named migrations with transactional rollbacks |
+| **Full-Text Search (Tantivy)** | <Tip /> Opt-in | Fast BM25 full-text indexing via `index_method` |
+| **Vector Search** | <Tip /> Opt-in | Dense and sparse vector indexing (`Vector32`) |
+| **At-Rest Encryption** | <Tip /> Opt-in | `aegis256` or `aes256gcm` linked to Keychain |
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Local CRUD with `@Table` / `StructuredQueries` | **Ready** | Type-safe model layer |
-| `LiveQuery` / `LiveQueryOne` CDC observation | **Ready** | Cooperative polling, < 250 ms refresh |
-| Concurrent writes | **Ready** | CDC-safe busy-retry or MVCC when CDC is off |
-| CloudKit private-database sync | **Beta** | Test on physical device before shipping |
-| Migrations | **Ready** | Append-only, transactional or asynchronous |
-| Full-text search (Tantivy) | **Opt-in** | Requires `index_method` token |
-| Vector search | **Opt-in** | Dense and sparse vectors, index method optional |
-| Materialized views (IVM) | **Opt-in** | Requires `views` token |
-| Generated columns, `STRICT`, `WITHOUT ROWID` | **Opt-in** | Via `@BoutiqueTable` |
-| At-rest encryption | **Opt-in** | `aegis256` or `aes256gcm`, Keychain key |
-| Multi-process WAL | **Opt-in** | App Group / extension sharing |
+---
 
-## Where to start
+## Explore the Documentation
 
-- [Core concepts](core-concepts)
-- [Installation](getting-started/installation)
-- [Quick start](getting-started/quick-start)
-- [SwiftUI integration](swiftui-integration)
-- [Turso features in Apple apps](turso-features-in-apple-apps)
+<CardGroup cols={3}>
+  <Card title="Quick Start" icon="rocket" href="/getting-started/quick-start">
+    Set up BoutiqueDB in your Xcode project in under 5 minutes.
+  </Card>
+  <Card title="SwiftUI Integration" icon="mobile" href="/swiftui-integration">
+    Learn how to build responsive, reactive views with `@LiveQuery`.
+  </Card>
+  <Card title="Turso Features" icon="sparkles" href="/turso-features-in-apple-apps">
+    Unlock FTS, Vector embeddings, and MVCC concurrency.
+  </Card>
+</CardGroup>

@@ -1,11 +1,11 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
   "name": "BoutiqueDB",
+  "theme": "mint",
   "colors": {
-    "primary": "#4F46E5",
-    "light": "#818CF8",
-    "dark": "#312E81"
+    "primary": "#F97316",
+    "light": "#FB923C",
+    "dark": "#EA580C"
   },
   "favicon": "/favicon.png",
   "logo": {
@@ -13,76 +13,91 @@
     "dark": "/logo/dark.png"
   },
   "navigation": {
-    "groups": [
+    "tabs": [
       {
-        "group": "Overview",
-        "icon": "book-open",
-        "pages": [
-          "index",
-          "core-concepts",
-          "stack",
-          "why-boutiquedb",
-          "sqlite-comparison",
-          "sync-overview"
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "icon": "house",
+            "pages": [
+              "index",
+              "core-concepts",
+              "stack",
+              "why-boutiquedb",
+              "sqlite-comparison",
+              "sync-overview"
+            ]
+          },
+          {
+            "group": "Getting Started",
+            "icon": "rocket",
+            "pages": [
+              "getting-started/installation",
+              "getting-started/quick-start",
+              "getting-started/open-options"
+            ]
+          },
+          {
+            "group": "Swift & SwiftUI Integration",
+            "icon": "mobile",
+            "pages": [
+              "swiftui-integration",
+              "guides/models-and-tables",
+              "guides/live-queries",
+              "guides/migrations",
+              "best-practices",
+              "performance-tuning"
+            ]
+          },
+          {
+            "group": "Turso & CloudKit Engine",
+            "icon": "cloud-arrow-up",
+            "pages": [
+              "guides/cloudkit-sync",
+              "turso-features-in-apple-apps",
+              "guides/fts-and-vector",
+              "guides/concurrency",
+              "guides/testing"
+            ]
+          }
         ]
       },
       {
-        "group": "Getting Started",
-        "icon": "rocket",
-        "pages": [
-          "getting-started/installation",
-          "getting-started/quick-start",
-          "getting-started/open-options"
-        ]
-      },
-      {
-        "group": "Guides",
-        "icon": "map",
-        "pages": [
-          "guides/models-and-tables",
-          "guides/live-queries",
-          "guides/migrations",
-          "guides/app-template",
-          "guides/cloudkit-sync",
-          "guides/fts-and-vector",
-          "turso-features-in-apple-apps",
-          "swiftui-integration",
-          "best-practices",
-          "performance-tuning",
-          "guides/concurrency",
-          "guides/testing"
-        ]
-      },
-      {
-        "group": "Advanced",
-        "icon": "microchip",
-        "pages": [
-          "advanced/boutiquedb-architecture",
-          "advanced/engine-architecture",
-          "advanced/sdk-kit-c-abi",
-          "advanced/sync-protocol",
-          "advanced/experimental-features"
-        ]
-      },
-      {
-        "group": "Contributors",
-        "icon": "code",
-        "pages": [
-          "contributors/build-engine",
-          "contributors/multi-arch-packaging",
-          "contributors/spi-checklist",
-          "contributors/testing",
-          "contributors/cloudkit-qa-checklist",
-          "contributors/publishing",
-          "contributors/sync-benchmarks"
-        ]
-      },
-      {
-        "group": "Agent & Human Cookbook",
-        "icon": "robot",
-        "pages": [
-          "agent-cookbook",
-          "skills"
+        "tab": "Architecture & Specs",
+        "groups": [
+          {
+            "group": "Deep Dives",
+            "icon": "diagram-project",
+            "pages": [
+              "advanced/boutiquedb-architecture",
+              "advanced/engine-architecture",
+              "advanced/sdk-kit-c-abi",
+              "advanced/sync-protocol",
+              "advanced/experimental-features"
+            ]
+          },
+          {
+            "group": "Package Contributors",
+            "icon": "code-branch",
+            "pages": [
+              "contributors/build-engine",
+              "contributors/multi-arch-packaging",
+              "contributors/spi-checklist",
+              "contributors/testing",
+              "contributors/cloudkit-qa-checklist",
+              "contributors/publishing",
+              "contributors/sync-benchmarks"
+            ]
+          },
+          {
+            "group": "AI & Agent Integration",
+            "icon": "robot",
+            "pages": [
+              "agent-cookbook",
+              "skills"
+            ]
+          }
         ]
       }
     ]
@@ -96,7 +111,7 @@
     ],
     "primary": {
       "type": "button",
-      "label": "Get Started",
+      "label": "Quick Start",
       "href": "/getting-started/quick-start"
     }
   },

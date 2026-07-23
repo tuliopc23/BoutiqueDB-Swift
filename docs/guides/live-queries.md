@@ -1,106 +1,114 @@
-# Live queries
+---
+title: "Live Queries"
+sidebarTitle: "Live Queries"
+description: "Build reactive, real-time UI features with CDC-backed `@LiveQuery` and `@LiveQueryOne` property wrappers."
+---
 
-Live queries keep SwiftUI in sync with the local database. They observe CDC change records and refresh the query result automatically.
+BoutiqueDB provides reactive UI updates without requiring heavy ORM observers, notification posting, or manual view refreshes.
 
-## How it works
+---
 
-1. Local writes call `TursoStore.invalidate()`, which increments a generation.
-2. `TursoStore` publishes an `AsyncStream` of change events.
-3. `@LiveQuery` subscribes to the stream and re-runs its query on the `DatabaseActor`.
-4. The wrapped property updates, and SwiftUI re-renders.
+## How CDC Live Queries Work
 
-CDC polling is cooperative (~50 ms idle) and does not require push notifications.
+Whenever data is modified within a `db.write` block, BoutiqueDB generates Change Data Capture (CDC) events (`turso_cdc`). The `@LiveQuery` property wrapper listens to these change tokens and triggers view re-evaluations automatically.
 
-## `@LiveQuery`
-
-```swift
-import BoutiqueDB
-import Observation
-import SwiftUI
-
-@MainActor
-@Observable
-final class NotesModel {
-  @ObservationIgnored
-  @LiveQuery(db) { Note.all.order { $0.updatedAt.desc() }.asSelect() }
-  var notes: [Note] = []
-
-  let db: BoutiqueDB
-  init(db: BoutiqueDB) { self.db = db }
-}
+```mermaid
+sequenceDiagram
+    participant View as SwiftUI View (@LiveQuery)
+    participant Engine as BoutiqueDB Actor
+    participant CDC as CDC Token Stream
+    
+    Engine->>CDC: db.write { insert / update }
+    CDC-->>View: Invalidate Change Token (< 250ms)
+    View->>Engine: Re-fetch query results
+    Engine-->>View: Deliver updated [Model]
 ```
 
-> **Note:** Use `@ObservationIgnored` on the property wrapper so `Observation` tracks `notes`, not the wrapper instance.
+---
 
-## `@LiveQueryOne`
+## Query Types
 
-For a single row:
+### `@LiveQuery` (Array Queries)
 
-```swift
-@ObservationIgnored
-@LiveQueryOne(db) { Note.where { $0.id.eq(noteID) }.asSelect() }
-var note: Note?
-```
-
-## Dynamic queries
+Observes a list of matching records.
 
 ```swift
-@MainActor
-@Observable
-final class SearchModel {
-  @ObservationIgnored
-  @LiveQuery(db) { Note.all.asSelect() }
-  var results: [Note] = []
+struct UncompletedTasksView: View {
+    let db: BoutiqueDB
 
-  var query = "" {
-    didSet {
-      $results.setQuery {
-        if query.isEmpty {
-          Note.all.asSelect()
-        } else {
-          Note.where { $0.title.match(query) }
-            .order { $0.title.score(query).desc() }
-            .asSelect()
+    @ObservationIgnored
+    @LiveQuery var tasks: [TaskItem]
+
+    init(db: BoutiqueDB) {
+        self.db = db
+        self._tasks = LiveQuery(db) {
+            TaskItem.where { $0.isCompleted.eq(false) }
+                .order { $0.dueDate.asc() }
+                .asSelect()
         }
-      }
     }
-  }
+
+    var body: some View {
+        List(tasks, id: \.id) { task in
+            Text(task.title)
+        }
+    }
 }
 ```
 
-## Manual refresh
+---
 
-You can force a refresh when the stream is not enough:
+### `@LiveQueryOne` (Single Record Queries)
 
-```swift
-model.$notes.forceRefresh()
-
-// Awaitable reload
-await model.$notes.load()
-```
-
-## Loading and error states
+Observes an optional single record (e.g. by unique primary key or single config setting).
 
 ```swift
-struct NotesView: View {
-  @State private var model: NotesModel
+struct UserProfileView: View {
+    let db: BoutiqueDB
+    let userId: UUID
 
-  var body: some View {
-    if let error = model.$notes.loadError {
-      Text("Error: \(error)")
-    } else if model.$notes.isLoading {
-      ProgressView()
-    } else {
-      List(model.notes) { note in Text(note.title) }
+    @ObservationIgnored
+    @LiveQueryOne var profile: UserProfile?
+
+    init(db: BoutiqueDB, userId: UUID) {
+        self.db = db
+        self.userId = userId
+        self._profile = LiveQueryOne(db) {
+            UserProfile.where { $0.id.eq(userId) }.asSelect()
+        }
     }
-  }
+
+    var body: some View {
+        Group {
+            if let profile {
+                VStack {
+                    Text(profile.name).font(.title)
+                    Text(profile.email).foregroundStyle(.secondary)
+                }
+            } else {
+                ProgressView()
+            }
+        }
+    }
 }
 ```
 
-## Performance notes
+---
 
-- Each `LiveQuery` runs its SQL on the `DatabaseActor` whenever a change is detected.
-- For large result sets, use `limit` and `order` to keep refresh work small.
-- Avoid creating many `LiveQuery` instances for the same underlying data; share a model object across views.
+## Configuring CDC Refresh Interval
 
-See also [SwiftUI integration](../swiftui-integration) and [Performance tuning](../performance-tuning).
+By default, BoutiqueDB checks CDC tokens every **250 ms**. You can adjust the polling frequency per database instance:
+
+```swift
+var config = BoutiqueConfiguration()
+config.cdcPollInterval = .milliseconds(100) // Fast 100ms refresh
+
+let db = try await BoutiqueDB.open(
+    url: storeURL,
+    configuration: config
+)
+```
+
+<Note>
+**Local Mutation Instant Invalidation**: When writes originate locally from the same process (`db.write`), `@LiveQuery` updates instantly without waiting for the CDC polling interval timer!
+</Note>

@@ -1,103 +1,78 @@
-# Testing
+---
+title: "Testing & Previewing"
+sidebarTitle: "Testing"
+description: "Write fast, isolated unit tests and configure Xcode Previews with BoutiqueDB in-memory databases."
+---
 
-BoutiqueDB can be tested with the Swift Testing framework or XCTest. The key is to use isolated, temporary-file databases per test.
+BoutiqueDB provides built-in utilities for creating isolated, temporary in-memory database instances designed for unit testing and Xcode Previews.
 
-## Unit tests with `BoutiqueDB`
+---
 
-```swift
+## Xcode Previews Setup
+
+Use `BoutiqueDB.inMemoryURL()` to launch lightweight, fast database instances without writing temporary files to the disk sandbox:
+
+```swift TaskListView_Previews.swift
+import SwiftUI
 import BoutiqueDB
-import Testing
 
-@Test
-func insertsAndQueriesNotes() async throws {
-  let url = URL(fileURLWithPath: "/tmp/boutiquedb-test-\(UUID().uuidString).db")
-  let db = try await BoutiqueDB.open(url: url, migrations: AppMigrations.plan)
-  defer {
-    db.close()
-    try? FileManager.default.removeItem(at: url)
-  }
-
-  try await db.write { conn in
-    try conn.execute(
-      "INSERT INTO notes (id, title) VALUES (?, ?)",
-      [.text("1"), .text("Test")]
+#Preview {
+    let db = try! BoutiqueDB.open(
+        url: BoutiqueDB.inMemoryURL(),
+        migrations: AppMigrations.plan
     )
-  }
-
-  let count = try await db.read { conn in
-    try Note.all.fetchCount(conn.connection)
-  }
-
-  #expect(count == 1)
+    
+    Task {
+        try await db.write { conn in
+            try TaskItem.insert {
+                TaskItem(id: UUID(), title: "Test Preview Task", isCompleted: false, createdAt: Date())
+            }.execute(conn.connection)
+        }
+    }
+    
+    return TaskListView(db: db)
 }
 ```
 
-## Test helpers
+---
 
-Create a helper that every test calls:
+## Writing XCTest Unit Tests
 
-```swift
-func openTestDB(
-  migrations: BoutiqueMigrationPlan = AppMigrations.plan,
-  startListening: Bool = false
-) throws -> BoutiqueDB {
-  let url = FileManager.default.temporaryDirectory
-    .appendingPathComponent("bd-test-\(UUID().uuidString).db")
-  return try BoutiqueDB(
-    url: url,
-    startListening: startListening,
-    openOptions: .tursoEnhanced,
-    migrations: migrations
-  )
+Create fresh in-memory instances inside `setUp()` or helper methods to ensure complete test isolation:
+
+```swift TaskStoreTests.swift
+import XCTest
+import BoutiqueDB
+@testable import MyApp
+
+final class TaskStoreTests: XCTestCase {
+    var db: BoutiqueDB!
+
+    override func setUp() async throws {
+        try await super.setUp()
+        self.db = try BoutiqueDB.open(
+            url: BoutiqueDB.inMemoryURL(),
+            migrations: AppMigrations.plan
+        )
+    }
+
+    func testAddTaskInsertsRecord() async throws {
+        let task = TaskItem(id: UUID(), title: "Buy Milk", isCompleted: false, createdAt: Date())
+        
+        try await db.write { conn in
+            try TaskItem.insert { task }.execute(conn.connection)
+        }
+        
+        let fetched = try await db.read { conn in
+            try TaskItem.where { $0.id.eq(task.id) }.fetchOne(conn.connection)
+        }
+        
+        XCTAssertNotNil(fetched)
+        XCTAssertEqual(fetched?.title, "Buy Milk")
+    }
 }
 ```
 
-## Test against a local engine build
-
-If you are iterating on the engine itself, point the package at a local `Vendor/TursoSDK.xcframework`:
-
-```bash
-# Build the engine into the package checkout
-./Scripts/build-turso-sdk-xcframework.sh
-BOUTIQUE_LOCAL_TURSO_SDK=1 swift test
-```
-
-For a single debug slice:
-
-```bash
-SLICES=macos-arm64 ./Scripts/build-turso-sdk-xcframework.sh
-BOUTIQUE_LOCAL_TURSO_SDK=1 swift test
-```
-
-Never ship single-slice binaries.
-
-## Testing CloudKit sync
-
-- Use the CloudKit development environment.
-- Test on a physical device with a signed-in iCloud account before shipping.
-- The simulator is useful for unit tests but does not validate push-driven sync.
-- Use `enablesCloudKit: false` in unit tests to avoid entitlements.
-
-## LiveQuery tests
-
-Use `store.advanceFromCDC()` to trigger a refresh synchronously:
-
-```swift
-let query = LiveQuery(db) { Note.all.asSelect() }
-_ = await waitFor { !query.isLoading }
-
-try await db.write { conn in
-  try Note.insert { Note(id: UUID(), title: "T", body: "") }
-    .execute(conn.connection)
-}
-
-query.forceRefresh()
-_ = await waitFor { query.wrappedValue.count == 1 }
-```
-
-## Test isolation
-
-- Create a unique database file per test.
-- Call `db.close()` and delete files in `defer`.
-- Do not share a `BoutiqueDB` instance across tests that write data.
-- Use `startListening: false` unless you are testing observation.
+<Tip>
+**In-Memory Speed**: `inMemoryURL()` runs database operations in RAM, making XCTest execution instant while verifying full SQL schema and migration plans!
+</Tip>

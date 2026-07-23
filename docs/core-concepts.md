@@ -1,143 +1,165 @@
-# Core concepts
+---
+title: "Core Concepts"
+sidebarTitle: "Core Concepts"
+description: "Understand the core building blocks of BoutiqueDB: database files, models, migrations, actor concurrency, live queries, and sync."
+---
 
-BoutiqueDB is organized around a small number of concepts. Understanding them makes every other guide easier.
+BoutiqueDB is organized around a small number of core concepts. Understanding them makes integrating the framework into your iOS or macOS application straightforward.
 
-## 1. The database file
+<CardGroup cols={2}>
+  <Card title="Database Sandbox File" icon="file-zipper">
+    SQLite-compatible database file residing inside your app container or shared App Group.
+  </Card>
+  <Card title="Type-Safe Models" icon="code">
+    Swift structs using `@Table` and `@BoutiqueTable` macros with `StructuredQueries`.
+  </Card>
+  <Card title="DatabaseActor Concurrency" icon="shield-halved">
+    All engine I/O runs safely off the main thread via `@MainActor` and background actors.
+  </Card>
+  <Card title="CDC Live Queries" icon="rotate">
+    Automated UI state updates backed by Change Data Capture tokens.
+  </Card>
+</CardGroup>
 
-A BoutiqueDB database is a regular SQLite-compatible file on disk. You choose its URL:
+---
+
+## 1. The Database File
+
+A BoutiqueDB database is a regular SQLite-compatible file on disk. You select its location using helper methods:
 
 ```swift
 let url = try BoutiqueDB.applicationSupportURL(filename: "app.db")
 let db = try await BoutiqueDB.open(url: url, migrations: AppMigrations.plan)
 ```
 
-You can use `FileManager` locations for:
+<ParamField path="url" type="URL" required>
+  Target disk URL. Supported locations include:
+  - `BoutiqueDB.applicationSupportURL()`: Default persistent data sandbox.
+  - `BoutiqueDB.documentsURL()`: User-accessible documents directory.
+  - `BoutiqueDB.inMemoryURL()`: In-memory store for Xcode Previews and tests.
+  - App Group Container: Shared database file when `multiProcess: true` is set.
+</ParamField>
 
-- `.applicationSupportDirectory` — default persistent data.
-- `.documentDirectory` — user-visible files.
-- A shared App Group container — when combined with `multiProcess: true`.
-- A temporary file — for tests and SwiftUI previews.
+---
 
 ## 2. Models (`@Table` and `@BoutiqueTable`)
 
-Models are Swift structs. `StructuredQueries` provides `@Table` for type-safe columns. BoutiqueDB adds `@BoutiqueTable` for Turso-specific table options.
+Models are standard Swift structs. `StructuredQueries` provides `@Table` for type-safe query generation, while BoutiqueDB provides `@BoutiqueTable` for Turso-specific table options.
 
-```swift
+<CodeGroup>
+```swift StandardTable.swift
 import StructuredQueries
 
 @Table
 struct Note: Sendable {
-  @Column(primaryKey: true) let id: UUID
-  var title: String
-  var body: String
-  var updatedAt: Date = Date()
-}
-
-@BoutiqueTable(strict: true)
-struct Setting: Sendable {
-  @Column(primaryKey: true) var key: String
-  var value: String
+    @Column(primaryKey: true) let id: UUID
+    var title: String
+    var body: String
+    var updatedAt: Date = Date()
 }
 ```
 
-`@Table` gives you `Note.all`, `Note.where { ... }`, `Note.insert`, `Note.update`, and automatic `Codable`-style decoding.
+```swift BoutiqueEnhancedTable.swift
+import BoutiqueDB
+import StructuredQueries
 
-`@BoutiqueTable` adds:
+@BoutiqueTable(strict: true, withoutRowID: true)
+struct Setting: Sendable {
+    @Column(primaryKey: true) var key: String
+    var value: String
+}
+```
+</CodeGroup>
 
-- `STRICT` and `WITHOUT ROWID` options.
-- Generated columns via `@GeneratedColumn("lower(title)")`.
-- Stacked `@FTSIndex` and `@VectorIndex` attributes.
+<Note>
+**Model Capabilities**: `@Table` exposes `Note.all`, `Note.where { ... }`, `Note.insert`, `Note.update`, and `Codable` decoding. `@BoutiqueTable` adds `STRICT`, `WITHOUT ROWID`, and generated columns.
+</Note>
 
-## 3. Migrations
+---
 
-Migrations are append-only and identified by stable strings. They are not auto-generated.
+## 3. Schema Migrations
+
+Migrations in BoutiqueDB are explicit, named, and append-only:
 
 ```swift
 enum AppMigrations {
-  static let plan = BoutiqueMigrationPlan {
-    BoutiqueMigration("v1_create_notes") { conn in
-      for sql in Note.boutiqueCreateStatements {
-        try conn.execute(sql)
-      }
-    }
+    static let plan = BoutiqueMigrationPlan {
+        BoutiqueMigration("v1_create_notes") { conn in
+            try conn.execute("""
+                CREATE TABLE note (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    updatedAt REAL NOT NULL
+                )
+            """)
+        }
 
-    BoutiqueMigration("v2_add_updated_at") { conn in
-      try conn.execute("""
-        ALTER TABLE notes ADD COLUMN updatedAt TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'
-      """)
+        BoutiqueMigration("v2_add_pinned_column") { conn in
+            try conn.execute("""
+                ALTER TABLE note ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0
+            """)
+        }
     }
-  }
 }
 ```
 
-Transactional migrations run inside one native transaction with the bookkeeping insert. Asynchronous migrations suspend and must be idempotent.
+---
 
-## 4. Reads and writes
+## 4. Isolation & Concurrency Safety
 
-All engine I/O goes through the `DatabaseActor`.
+All database read and write operations are routed through isolation guards:
 
 ```swift
+// Write Transaction
 try await db.write { conn in
-  try Note.insert { Note(id: UUID(), title: "Hello", body: "") }
-    .execute(conn.connection)
+    try Note.insert { Note(id: UUID(), title: "New Note", body: "") }
+        .execute(conn.connection)
 }
 
+// Read Query
 let notes = try await db.read { conn in
-  try Note.all.order { $0.updatedAt.desc() }.fetchAll(conn.connection)
+    try Note.all.order { $0.updatedAt.desc() }.fetchAll(conn.connection)
 }
 ```
 
-- `BoutiqueDB` is `@MainActor` so it is safe to own from SwiftUI.
-- The closure runs on a background actor.
-- Do **not** call `@MainActor` `BoutiqueDB` methods from inside the closure.
+<Warning>
+**Actor Isolation**: `BoutiqueDB` itself is annotated with `@MainActor` so it can be safely owned by SwiftUI views. All heavy disk and engine I/O runs on a dedicated background `DatabaseActor`.
+</Warning>
 
-## 5. Live queries
+---
 
-`LiveQuery` and `LiveQueryOne` subscribe to `TursoStore` change events and re-run the query automatically.
+## 5. CDC Live Queries
+
+`LiveQuery` and `LiveQueryOne` property wrappers subscribe to database change tokens (`turso_cdc`) and trigger view invalidation automatically:
 
 ```swift
 @MainActor
-final class NotesModel: Observable {
-  @LiveQuery(db) { Note.all.order { $0.updatedAt.desc() }.asSelect() }
-  var notes: [Note] = []
+final class NotesModel: ObservableObject {
+    @LiveQuery(db) { Note.all.order { $0.updatedAt.desc() }.asSelect() }
+    var notes: [Note] = []
 }
 ```
 
-Local writes call `store.invalidate()` immediately; the CDC listener catches changes from other connections. The default poll interval is 250 ms.
+---
 
-## 6. CloudKit sync
+## 6. Error Handling
 
-`TursoCKSync` maps CDC changes to CloudKit records through `CKSyncEngine`. Only private-database sync is supported in the current beta.
-
-```swift
-let syncEngine = BoutiqueDBSyncEngine(
-  db: db,
-  syncedTables: [try SyncedTable(schema: NoteSchema.self)]
-)
-try syncEngine.attach(to: db, automaticallyDrain: true)
-```
-
-## 7. Turso features
-
-Experimental engine features are enabled at open time through `TursoOpenOptions`:
+BoutiqueDB surfaces strongly-typed errors via `BoutiqueError`:
 
 ```swift
-let db = try BoutiqueDB(
-  url: url,
-  openOptions: .tursoEnhanced
-)
+do {
+    try await db.write { conn in ... }
+} catch let error as BoutiqueError {
+    switch error {
+    case .sql(let code, let message):
+        print("SQLite/Turso Engine Error (\(code)): \(message)")
+    case .migrationFailed(let id, let message):
+        print("Migration '\(id)' failed: \(message)")
+    case .transactionInProgress:
+        print("Write conflict occurred.")
+    default:
+        print("BoutiqueDB Error: \(error)")
+    }
+}
 ```
-
-`.tursoEnhanced` enables `views`, `index_method`, `generated_columns`, `vacuum`, and `without_rowid`. Other features (`encryption`, `multiprocess_wal`, `async_io`) are toggled separately.
-
-## 8. Errors
-
-BoutiqueDB surfaces high-level errors:
-
-- `BoutiqueError.encryptionUnavailable`
-- `BoutiqueError.multiProcessWALUnavailable`
-- `BoutiqueError.featureUnavailable(_:)`
-- `BoutiqueError.migrationFailed(id:message:)`
-- `BoutiqueError.transactionInProgress`
-
-Most `TursoError` values are wrapped as `BoutiqueError.sql(code:message:)`.

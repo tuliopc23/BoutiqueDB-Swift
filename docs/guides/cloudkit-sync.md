@@ -1,120 +1,75 @@
-# CloudKit sync
+---
+title: "CloudKit Synchronization"
+sidebarTitle: "CloudKit Sync"
+description: "Sync your local BoutiqueDB tables across user Apple devices using CKSyncEngine without backend infrastructure."
+---
 
-`TursoCKSync` bridges BoutiqueDB change records and `CKSyncEngine`. It is designed for per-user private database sync.
+BoutiqueDB includes built-in sync support for Apple's **CloudKit** via `CKSyncEngine`. This enables multi-device data sync for iOS and macOS applications directly through the user's personal iCloud account.
 
-## Setup
+---
 
-1. Enable **iCloud** and **CloudKit** in your app entitlements.
-2. Add **Push Notifications** and the `remote-notification` background mode.
-3. Provide a `CKContainer` identifier or inject a `CKContainer`.
-4. Add an `updatedAt` (or similar) field if you want `lastWriterWins` conflict resolution.
+## Architecture Overview
 
-```swift
-import BoutiqueDB
-import CloudKit
+BoutiqueDB CloudKit Sync uses Change Data Capture (`turso_cdc`) to convert local SQLite row mutations into CloudKit `CKRecord` mutations:
 
-@Table
-struct Note: Sendable {
-  @Column(primaryKey: true) let id: UUID
-  var title: String
-  var body: String
-  var updatedAt: Date
-}
+```mermaid
+flowchart LR
+    LocalDB[(BoutiqueDB SQLite)] <-->|CDC Tokens| SyncEngine[BoutiqueDBSyncEngine]
+    SyncEngine <-->|CKSyncEngine| iCloud((Apple CloudKit Private DB))
+```
 
-let db = try await BoutiqueDB.open(
-  url: BoutiqueDB.applicationSupportURL(),
-  migrations: AppMigrations.plan
-)
+---
 
-let syncEngine = try BoutiqueDBSyncEngine(
-  db: db,
-  containerIdentifier: "iCloud.com.example.myapp",
-  syncedTables: [
-    try SyncedTable(
-      name: "notes",
-      primaryKeyColumn: "id",
-      columns: ["title", "body", "updatedAt"]
+## Step-by-Step Configuration
+
+<Steps>
+  <Step title="Enable CloudKit Capability in Xcode">
+    1. Open your main App target in Xcode.
+    2. Go to **Signing & Capabilities > + Capability > iCloud**.
+    3. Check **CloudKit** and select or create an iCloud Container (e.g. `iCloud.com.example.MyApp`).
+  </Step>
+
+  <Step title="Register Synced Schemas">
+    Specify which `@Table` schemas should be synchronized to CloudKit:
+
+    ```swift SyncSetup.swift
+    import BoutiqueDB
+
+    let syncedTables = [
+        try SyncedTable(schema: Note.self),
+        try SyncedTable(schema: TaskItem.self)
+    ]
+    ```
+  </Step>
+
+  <Step title="Initialize & Attach Sync Engine">
+    Attach the `BoutiqueDBSyncEngine` to your database instance:
+
+    ```swift AppSync.swift
+    let syncEngine = BoutiqueDBSyncEngine(
+        containerIdentifier: "iCloud.com.example.MyApp",
+        tables: syncedTables
     )
-  ],
-  conflictPolicy: .lastWriterWins(field: "updatedAt")
-)
-syncEngine.attach(to: db, automaticallyDrain: true)
-Task {
-  try await syncEngine.start()
-}
-```
 
-## How sync works
+    try await syncEngine.attach(to: db, automaticallyDrain: true)
+    ```
+  </Step>
+</Steps>
 
-- Local commits are captured in `turso_cdc`.
-- `BoutiqueDBSyncEngine` drains CDC rows and maps them to `CKRecord` objects.
-- `CKSyncEngine` uploads new/modified records and downloads remote changes.
-- Remote changes are applied to the local database through the normal `write` path.
+---
 
-## `SyncedTable` from `BoutiqueSchema`
+## Conflict Resolution & Device Testing
 
-If you use `@BoutiqueTable`, you can derive `SyncedTable` from the schema:
+<AccordionGroup>
+  <Accordion title="Last-Write-Wins Conflict Handling" icon="clock">
+    By default, BoutiqueDB uses record modification timestamps to resolve edit conflicts between multiple devices. Newer local or remote timestamps take precedence.
+  </Accordion>
 
-```swift
-@BoutiqueTable
-struct NoteSchema: Sendable {
-  @Column(primaryKey: true) let id: UUID
-  var title: String
-  var body: String
-  var updatedAt: Date
-}
+  <Accordion title="Testing Sync on Physical Devices" icon="mobile-screen">
+    CloudKit sync requires an active iCloud account signed in on an actual iOS device or macOS user account. Simulator sync requires signing into an Apple ID under iOS Settings.
+  </Accordion>
+</AccordionGroup>
 
-let synced = try SyncedTable(schema: NoteSchema.self, recordType: "Note")
-```
-
-## Conflict handling
-
-```swift
-let syncEngine = try BoutiqueDBSyncEngine(
-  db: db,
-  syncedTables: [...],
-  conflictPolicy: .lastWriterWins(field: "updatedAt")
-)
-```
-
-Policies:
-
-- `.serverWins` — remote record overwrites local changes.
-- `.clientWins` — re-pend the local save.
-- `.lastWriterWins(field:)` — compare a timestamp or version column.
-
-## Account switches
-
-When the user signs out or switches iCloud accounts:
-
-- Local rows are preserved.
-- Sync metadata is reset.
-- The host app is responsible for account UI and policy.
-
-Call `noteAccountIdentity` with a stable hash of the signed-in Apple ID to detect changes.
-
-## Status observation
-
-```swift
-Task {
-  for await status in syncEngine.syncStatus() {
-    switch status {
-    case .idle: break
-    case .syncing: showProgress()
-    case .failed(let message): showError(message)
-    case .needsAuthentication: showSignIn()
-    case .accountChanged: showAccountChanged()
-    }
-  }
-}
-```
-
-## QA checklist
-
-See the [CloudKit QA checklist](../contributors/cloudkit-qa-checklist) for production validation steps.
-
-## Limitations
-
-- Sharing and public CloudKit databases are not supported in the current beta.
-- Sync must be tested on a physical device with a production iCloud account for final validation; the simulator is useful for development but not sufficient.
-- Tables with `AUTOINCREMENT`, compound primary keys, or non-unique indexes cannot be synced.
+<Note>
+**Private Database Privacy**: All records are synced directly into the user's private iCloud database container. No user data is stored on external third-party servers!
+</Note>

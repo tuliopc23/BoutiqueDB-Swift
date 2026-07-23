@@ -1,39 +1,51 @@
-# Why BoutiqueDB?
+---
+title: "Why BoutiqueDB?"
+sidebarTitle: "Why BoutiqueDB?"
+description: "Discover why BoutiqueDB is built specifically for Apple platforms, combining local-first persistence with Turso engine capabilities."
+---
 
-BoutiqueDB exists because the most common Swift persistence story — a raw SQLite wrapper or an ORM with hidden complexity — forces a trade-off between control and ergonomics. BoutiqueDB aims to keep the file format simple, the API Swift-native, and the sync story optional.
+Building modern iOS and macOS applications requires a persistence layer that is **fast, reliable, thread-safe, and offline-ready**. Standard solutions often force developer tradeoffs between complex ORM abstractions and low-level SQL C APIs.
 
-## Compared to raw SQLite or GRDB
+BoutiqueDB combines the local-first ergonomics of SQLite with modern Swift concurrency, Change Data Capture (CDC) observation, and Apple CloudKit sync.
 
-BoutiqueDB is not trying to be a thin SQLite wrapper. It is a higher-level persistence layer with:
+---
 
-- **Type-safe model definitions** via `swift-structured-queries` `@Table` and `@Column`.
-- **Live, observable queries** backed by CDC instead of polling.
-- **CloudKit sync** as a first-class module rather than a bolt-on.
-- **Optional Turso engine features** such as FTS, vector indexes, and materialized views, exposed through typed Swift APIs and macros.
+## Key Advantages
 
-If you need full SQL control, the underlying `TursoKit` and `StructuredQueriesTurso` still give you prepared statements and raw SQL escape hatches.
+<CardGroup cols={2}>
+  <Card title="Offline & Local-First" icon="wifi-slash">
+    Your database lives locally on the user's device. Apps launch instantly and operate seamlessly without network connectivity.
+  </Card>
+  <Card title="Swift Concurrency Safe" icon="swift">
+    Built from the ground up with `@MainActor` UI safety and isolated background `DatabaseActor` execution.
+  </Card>
+  <Card title="CDC Reactive Updates" icon="arrows-rotate">
+    UI views update automatically (< 250ms latency) via native Change Data Capture without heavy polling or manual notifications.
+  </Card>
+  <Card title="Zero Server Overhead" icon="cloud">
+    Sync data seamlessly across user Apple devices using private CloudKit containers without managing servers or API endpoints.
+  </Card>
+</CardGroup>
 
-## Compared to Core Data or SwiftData
+---
 
-Core Data and SwiftData are deeply integrated with Apple platforms and object graphs. BoutiqueDB is a relational, file-first alternative for apps that:
+## Comparison Matrix
 
-- Want a predictable, query-driven model layer.
-- Need to inspect or migrate the database schema with version-controlled SQL migrations.
-- Prefer a local-first architecture where sync is explicit and replaceable.
+| Feature | BoutiqueDB | SwiftData / CoreData | GRDB | Raw SQLite3 |
+| :--- | :---: | :---: | :---: | :---: |
+| **Local SQLite File** | <Check /> | <Check /> | <Check /> | <Check /> |
+| **Swift Concurrency (`async/await`)** | <Check /> | <Check /> | <Check /> | <Warning /> Manual |
+| **Type-Safe Queries (`@Table`)** | <Check /> | <Check /> | <Check /> | <Warning /> Strings |
+| **CDC Live Observation** | <Check /> | <Warning /> KVO / NSFRC | <Check /> | <Warning /> Manual |
+| **CloudKit Private Sync** | <Check /> | <Check /> | <Warning /> Extra setup | <Warning /> Custom |
+| **Full-Text Search (Tantivy BM25)** | <Tip /> Native | <Warning /> Basic FTS | <Warning /> FTS5 | <Warning /> FTS5 |
+| **Vector Search (AI Embeddings)** | <Tip /> Native | <Warning /> No | <Warning /> Extension | <Warning /> Extension |
+| **Hardware Encryption (AEGIS)** | <Tip /> Built-in | <Warning /> Data Protection | <Warning /> SQLCipher | <Warning /> Custom |
 
-## Compared to a server-backed database
+---
 
-BoutiqueDB keeps data in the app sandbox. There is no network round-trip for reads or writes. CloudKit sync is asynchronous and opportunistic; the app continues to work offline. If you later want Turso Cloud sync, the `SyncAdapter` protocol is designed so the local engine and schema remain the same.
+## Architectural Philosophy
 
-## When BoutiqueDB is the right fit
-
-- iOS or macOS apps that use SwiftUI and `Observation`.
-- Apps that want local-first data with CloudKit private-database sync.
-- Projects where query performance, FTS, vector search, or concurrent writes matter.
-- Teams that prefer explicit migrations and a source-controlled schema.
-
-## When to choose something else
-
-- You need a full object graph with object identity and faulting (Core Data may fit better).
-- You require real-time multi-device collaboration (you will need a server backend).
-- Your data model is document-oriented and you do not need SQL queries.
+1. **Local-First Authority**: The database file inside your app sandbox is the single source of truth. Network synchronization is asynchronous and non-blocking.
+2. **Type Safety Without Magic**: Models use compile-time macros (`@Table`) so queries remain standard Swift code.
+3. **Explicit Over Implicit**: Schema migrations and experimental engine flags (`TursoOpenOptions`) are explicit and version-controlled.

@@ -1,211 +1,162 @@
-# SwiftUI integration
+---
+title: "SwiftUI Integration"
+sidebarTitle: "SwiftUI Integration"
+description: "Master reactive state management, `@LiveQuery`, `@LiveQueryOne`, and Xcode Previews in SwiftUI apps."
+---
 
-BoutiqueDB is designed to feel native in SwiftUI. `BoutiqueDB` is `@MainActor`, `LiveQuery` is `@Observable`, and writes are `async`.
+BoutiqueDB is built specifically for modern Swift and SwiftUI. It combines `@MainActor` thread safety with `@LiveQuery` property wrappers to deliver effortless reactive state updates.
 
-## Bootstrapping the database
+## Observing Database State in SwiftUI
 
-Open the database in your app entry point before views need it. Surface open errors to the user instead of `try!`.
+`BoutiqueDB` provides two dedicated property wrappers for observing queries in real time:
 
-```swift
-import BoutiqueDB
-import Dependencies
+- `@LiveQuery`: Observes an array of models matching a `StructuredQueries` expression.
+- `@LiveQueryOne`: Observes a single optional model matching a unique query (e.g. by Primary Key).
+
+---
+
+### `@LiveQuery` Example
+
+```swift TaskListView.swift
 import SwiftUI
-
-@main
-struct MyApp: App {
-  @State private var db: BoutiqueDB?
-  @State private var openError: String?
-
-  var body: some Scene {
-    WindowGroup {
-      Group {
-        if let openError {
-          ContentUnavailableView(
-            "Database error",
-            systemImage: "externaldrive.badge.exclamationmark",
-            description: Text(openError)
-          )
-        } else if let db {
-          ContentView(db: db)
-        } else {
-          ProgressView("Opening database…")
-        }
-      }
-      .task {
-        do {
-          let url = try BoutiqueDB.applicationSupportURL()
-          let database = try await BoutiqueDB.open(
-            url: url,
-            migrations: AppMigrations.plan
-          )
-          prepareDependencies { $0.boutiqueDB = database }
-          self.db = database
-        } catch {
-          openError = String(describing: error)
-        }
-      }
-    }
-  }
-}
-```
-
-If you do not use `swift-dependencies`, pass the `BoutiqueDB` instance directly through the view tree or an `Environment` value.
-
-## `@LiveQuery` in an `@Observable` model
-
-```swift
 import BoutiqueDB
-import Observation
+import StructuredQueries
+
+struct TaskListView: View {
+    let db: BoutiqueDB
+
+    @ObservationIgnored
+    @LiveQuery var tasks: [TaskItem]
+
+    init(db: BoutiqueDB) {
+        self.db = db
+        self._tasks = LiveQuery(db) {
+            TaskItem.where { $0.isCompleted.eq(false) }
+                .order { $0.createdAt.desc() }
+                .asSelect()
+        }
+    }
+
+    var body: some View {
+        List(tasks, id: \.id) { task in
+            Text(task.title)
+        }
+    }
+}
+```
+
+---
+
+### `@LiveQueryOne` Example
+
+```swift TaskDetailView.swift
 import SwiftUI
+import BoutiqueDB
+import StructuredQueries
 
-@MainActor
-@Observable
-final class NotesModel {
-  @ObservationIgnored
-  @LiveQuery(model.db) { Note.all.order { $0.updatedAt.desc() }.asSelect() }
-  var notes: [Note] = []
+struct TaskDetailView: View {
+    let db: BoutiqueDB
+    let taskId: UUID
 
-  let db: BoutiqueDB
+    @ObservationIgnored
+    @LiveQueryOne var task: TaskItem?
 
-  init(db: BoutiqueDB) {
-    self.db = db
-  }
-
-  func addNote(_ title: String) async throws {
-    try await db.write { conn in
-      try Note.insert { Note(id: UUID(), title: title, body: "") }
-        .execute(conn.connection)
-    }
-  }
-}
-```
-
-`@LiveQuery` is `@Observable`, so `notes` updates whenever the database changes. The query re-runs on the `DatabaseActor` and the result is assigned back on `@MainActor`.
-
-## `@LiveQueryOne` for detail views
-
-```swift
-@MainActor
-@Observable
-final class NoteDetailModel {
-  @ObservationIgnored
-  @LiveQueryOne(model.db) { Note.where { $0.id.eq(noteID) }.asSelect() }
-  var note: Note?
-
-  init(db: BoutiqueDB, noteID: UUID) {
-    self.db = db
-    self.noteID = noteID
-  }
-
-  private let noteID: UUID
-  private let db: BoutiqueDB
-
-  func updateTitle(_ title: String) async throws {
-    try await db.write { conn in
-      try Note.where { $0.id.eq(noteID) }
-        .update { $0.title = title }
-        .execute(conn.connection)
-    }
-  }
-}
-```
-
-## Dynamic query parameters
-
-`LiveQuery.setQuery` replaces the query factory and reloads. Use this for search text, filters, or sort order.
-
-```swift
-@MainActor
-@Observable
-final class SearchModel {
-  @ObservationIgnored
-  @LiveQuery(model.db) { Note.all.asSelect() }
-  var results: [Note] = []
-
-  var query: String = "" {
-    didSet {
-      $results.setQuery {
-        if query.isEmpty {
-          Note.all.asSelect()
-        } else {
-          Note.where { $0.title.match(query) }.asSelect()
+    init(db: BoutiqueDB, taskId: UUID) {
+        self.db = db
+        self.taskId = taskId
+        self._task = LiveQueryOne(db) {
+            TaskItem.where { $0.id.eq(taskId) }.asSelect()
         }
-      }
     }
-  }
-}
-```
 
-> **Warning:** `setQuery` is called on the `LiveQuery` projected value (`$results`), not the wrapped value.
-
-## Loading and error states
-
-`LiveQuery` exposes `isLoading` and `loadError`:
-
-```swift
-struct NotesView: View {
-  @State private var model = NotesModel(db: …)
-
-  var body: some View {
-    Group {
-      if let error = model.$notes.loadError {
-        Text("Error: \(error)")
-      } else if model.$notes.isLoading {
-        ProgressView()
-      } else {
-        List(model.notes) { note in
-          Text(note.title)
+    var body: some View {
+        VStack {
+            if let task {
+                Text(task.title).font(.largeTitle)
+                Text("Created on: \(task.createdAt.formatted())")
+            } else {
+                ContentUnavailableView("Task Not Found", systemImage: "exclamationmark.triangle")
+            }
         }
-      }
     }
-  }
 }
 ```
 
-## Previews
+---
 
-Use an in-memory or temporary file with schema sync off and migrations applied inline. Never point a preview at the same file as your production app.
+## Dynamic Query Parameterization
 
-```swift
+If your query depends on user selection or view parameters, initialize `@LiveQuery` inside your custom initializer:
+
+<CodeGroup>
+```swift SearchableListView.swift
+struct SearchableListView: View {
+    let db: BoutiqueDB
+    @State private var searchQuery = ""
+    
+    var body: some View {
+        VStack {
+            TextField("Search tasks...", text: $searchQuery)
+                .textFieldStyle(.roundedBorder)
+                .padding()
+            
+            SearchResultsView(db: db, query: searchQuery)
+        }
+    }
+}
+```
+
+```swift SearchResultsView.swift
+struct SearchResultsView: View {
+    @ObservationIgnored
+    @LiveQuery var results: [TaskItem]
+    
+    init(db: BoutiqueDB, query: String) {
+        self._results = LiveQuery(db) {
+            if query.isEmpty {
+                return TaskItem.order { $0.title }.asSelect()
+            } else {
+                return TaskItem.where { $0.title.contains(query) }.asSelect()
+            }
+        }
+    }
+    
+    var body: some View {
+        List(results, id: \.id) { item in
+            Text(item.title)
+        }
+    }
+}
+```
+</CodeGroup>
+
+---
+
+## Xcode Previews Setup
+
+BoutiqueDB includes an in-memory database helper (`BoutiqueDB.inMemoryURL()`) designed specifically for Xcode Previews and Unit Tests.
+
+```swift ContentView_Previews.swift
 #Preview {
-  let url = URL(fileURLWithPath: "/tmp/preview-\(UUID().uuidString).db")
-  let db = try! BoutiqueDB.open(
-    url: url,
-    migrations: AppMigrations.plan
-  )
-  return NotesView(model: NotesModel(db: db))
-}
-```
-
-## Sheets and navigation
-
-Pass `BoutiqueDB` or a model object to detail and sheet views. Keep `LiveQuery` instances in the model, not in transient `View` state.
-
-```swift
-struct ContentView: View {
-  @State private var model: NotesModel
-
-  var body: some View {
-    NavigationStack {
-      List(model.notes) { note in
-        NavigationLink(note.title) {
-          NoteDetailView(db: model.db, noteID: note.id)
+    let db = try! BoutiqueDB.open(
+        url: BoutiqueDB.inMemoryURL(),
+        migrations: AppMigrations.plan
+    )
+    
+    // Seed initial preview data asynchronously
+    Task {
+        try await db.write { conn in
+            try TaskItem.insert {
+                TaskItem(id: UUID(), title: "Design Landing Page", isCompleted: false, createdAt: Date())
+                TaskItem(id: UUID(), title: "Set up Mintlify Docs", isCompleted: true, createdAt: Date())
+            }.execute(conn.connection)
         }
-      }
-      .toolbar {
-        Button("Add") {
-          Task { try? await model.addNote("Untitled") }
-        }
-      }
     }
-  }
+    
+    return TaskListView(db: db)
 }
 ```
 
-## Best practices for SwiftUI
-
-- Open the database once, early, and share it.
-- Own `LiveQuery` instances in `@Observable` models, not in `View` bodies.
-- Use `@ObservationIgnored` on `LiveQuery` properties so `Observation` observes the wrapped value, not the property wrapper itself.
-- Keep closures in `write`/`read` small; do not perform UI work inside them.
-- Call `db.close()` when tearing down tests or previews to avoid file locks.
+<Tip>
+**Performance Best Practice**: Keep `@LiveQuery` definitions scoped to the specific views that require them. Because BoutiqueDB CDC tracks changes per table, views only re-render when relevant tables undergo mutation!
+</Tip>

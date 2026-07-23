@@ -1,73 +1,57 @@
-# Concurrency
+---
+title: "Concurrency & Thread Safety"
+sidebarTitle: "Concurrency"
+description: "Master Swift concurrency isolation, DatabaseActor execution, transaction locks, and background writes in BoutiqueDB."
+---
 
-BoutiqueDB is designed around Swift concurrency and actor isolation. Getting the rules right avoids deadlocks and data races.
+BoutiqueDB is architected around modern Swift concurrency (`async`/`await`, `@MainActor`, `Sendable`, and `Actor` isolation) to eliminate data races and `SQLITE_BUSY` crashes.
 
-## Actor layout
+---
 
-| Type | Actor | Use |
-|------|-------|-----|
-| `BoutiqueDB` | `@MainActor` | Container, SwiftUI model host, `LiveQuery` owner |
-| `DatabaseActor` | isolated | All engine reads and writes |
-| `TursoStore` | `MainActor` bridge | Change event stream |
+## Isolation Architecture
 
-## Read and write
+```mermaid
+flowchart TD
+    UI[@MainActor UI Layer / SwiftUI] -->|async db.read / db.write| Actor[DatabaseActor Background Context]
+    Actor -->|Isolated SQLite Handle| TursoEngine[(Turso C Engine / Storage)]
+```
 
-```swift
+- **`BoutiqueDB` Container**: Annotated with `@MainActor`. You can store reference instances in your App State, `@StateObject`, or `@Observable` models.
+- **`DatabaseActor`**: Isolated actor where all disk reads, SQL compilation, and writes take place.
+
+---
+
+## Read vs Write Isolation Rules
+
+<CardGroup cols={2}>
+  <Card title="db.read Closure" icon="book-open">
+    Provides a read-only `BoutiqueDBConnection`. Safe to run concurrent reads simultaneously across threads.
+  </Card>
+  <Card title="db.write Closure" icon="pen-to-square">
+    Provides an exclusive write transaction. Automatically manages `BEGIN` and `COMMIT`/`ROLLBACK`.
+  </Card>
+</CardGroup>
+
+```swift ConcurrencyExample.swift
+// Execute write on background actor
 try await db.write { conn in
-  try conn.execute("INSERT INTO notes (title) VALUES (?)", [.text("Hello")])
+    try Note.insert { newNote }.execute(conn.connection)
 }
 
+// Execute read on background actor
 let notes = try await db.read { conn in
-  try Note.all.fetchAll(conn.connection)
+    try Note.all.fetchAll(conn.connection)
 }
 ```
 
-Closures run on `DatabaseActor`. Do not call `@MainActor` `BoutiqueDB` methods from inside the closure.
+---
 
-## Concurrent writes
+## Best Practices for Concurrency
 
-```swift
-let db = try BoutiqueDB(
-  url: url,
-  concurrentWrites: true
-)
+<Check>
+  **Do**: Pass value-type models (`Sendable` structs) in and out of `db.read` and `db.write` closures.
+</Check>
 
-try await db.writeConcurrent { conn in
-  try conn.execute("INSERT INTO ...", [...])
-}
-```
-
-With CDC enabled, `writeConcurrent` uses busy-retry `BEGIN IMMEDIATE` on the primary handle so CDC is always captured.
-
-With CDC disabled, it enables MVCC (`PRAGMA journal_mode = mvcc`) and uses `BEGIN CONCURRENT`.
-
-## Manual MVCC transactions
-
-When CDC is disabled, you can use explicit concurrent transactions:
-
-```swift
-try await db.beginConcurrent()
-try await db.writeConcurrent { conn in
-  try conn.execute("INSERT INTO ...", [...])
-}
-try await db.commitConcurrent()
-```
-
-## Rules
-
-1. **Never call `BoutiqueDB` from inside a `DatabaseActor` body.** `BoutiqueDB` is `@MainActor`; doing so can deadlock.
-2. **Use `read` for read-only work.** It opens a read transaction.
-3. **Use `write` for single-writer transactions.** It uses `BEGIN IMMEDIATE`.
-4. **Use `writeConcurrent` when contention is real.** It retries `SQLITE_BUSY` with exponential backoff (max 8 attempts).
-5. **Do not hold a `TursoConnection` outside `read`/`write`.** Use `unsafeConnection` only for sync attachment and diagnostics.
-6. **Do not enable CDC and MVCC together.** `BoutiqueError.cdcMutuallyExclusiveWithMVCC` is thrown.
-
-## Async I/O
-
-Enable `asyncIO` in `TursoOpenOptions` to make the engine yield at I/O boundaries:
-
-```swift
-let db = try BoutiqueDB(url: url, openOptions: .tursoEnhancedAsync)
-```
-
-This is recommended for apps that perform large imports, encryption, or multi-process WAL operations.
+<Warning>
+  **Don't**: Capture mutable state from outside the closure or call `@MainActor` methods from inside a `db.write` block. Doing so causes thread safety deadlocks.
+</Warning>

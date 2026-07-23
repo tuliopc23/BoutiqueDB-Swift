@@ -1,63 +1,58 @@
-# Differences from a SQLite-backed engine
+---
+title: "SQLite & Framework Comparison"
+sidebarTitle: "SQLite Comparison"
+description: "Detailed comparison between BoutiqueDB, SQLite, GRDB, CoreData, and SwiftData for Apple app developers."
+---
 
-BoutiqueDB’s underlying engine is a Rust rewrite of SQLite (Turso). It is file- and dialect-compatible, but it is not a thin wrapper around `libsqlite3`. The differences matter for performance, concurrency, and feature availability.
+Choosing the right persistence framework for your iOS or macOS application impact stability, concurrency model, and long-term codebase ergonomics.
 
-## File format compatibility
+This guide compares **BoutiqueDB** against existing database choices in the Apple ecosystem.
 
-SQLite database files open in BoutiqueDB and vice versa. The on-disk page format is shared, so you can migrate a `.db` file without export/import. The WAL format is engine-specific, so a live WAL from one engine should not be mixed with the other.
+---
 
-> **Warning:** Do not enable Turso-only experimental features on a database you intend to open with stock SQLite. Some features (custom types, generated columns, materialized views, vector indexes) write schema or indexes that SQLite may not understand.
+## Technical Comparison
 
-## Query execution model
+<AccordionGroup>
+  <Accordion title="BoutiqueDB vs GRDB" icon="scale-balanced">
+    **GRDB** is an exceptional, mature SQLite toolkit for Swift. 
 
-SQLite evaluates SQL opcodes directly inside its virtual machine. Turso compiles SQL into bytecode for a similar VDBE, but the bytecode interpreter, B-tree layer, and I/O scheduler are written in Rust and support cooperative async I/O.
+    **Key Differences**:
+    - **Engine Architecture**: GRDB compiles against system `libsqlite3.dylib` or custom SQLCipher builds. BoutiqueDB runs on the Rust **Turso engine** (`sdk-kit`).
+    - **CDC Observation**: GRDB relies on SQLite `update_hook` transaction monitoring. BoutiqueDB uses native Change Data Capture (`turso_cdc`), allowing CDC observation across multi-process WAL setups and background sync tasks.
+    - **Turso Features**: BoutiqueDB natively supports Tantivy BM25 FTS, vector search (`Vector32`), and IVM materialized views without extra C compilation steps.
+  </Accordion>
 
-Consequences:
+  <Accordion title="BoutiqueDB vs SwiftData & CoreData" icon="apple">
+    **SwiftData** and **CoreData** are Apple's official object-graph persistence frameworks.
 
-- `async_io` lets the engine yield at I/O boundaries, so long writes do not block Swift concurrency.
-- The same `DatabaseActor` can drive engine I/O without blocking the main thread.
-- Bytecode can be compared with `EXPLAIN` for compatibility testing.
+    **Key Differences**:
+    - **Object Graph vs Value Types**: CoreData/SwiftData manage complex object graphs with faulting and managed object contexts. BoutiqueDB operates purely on **immutable Swift structs** (`Sendable`).
+    - **Concurrency Model**: CoreData requires `performBackgroundTask` or `ModelActor`. BoutiqueDB uses Swift `@MainActor` for UI components and background `DatabaseActor` execution.
+    - **CloudKit Control**: SwiftData handles CloudKit sync automatically but offers limited debugging control when conflicts arise. BoutiqueDB exposes `CKSyncEngine` status, record mapping, and conflict hooks directly.
+  </Accordion>
 
-## Concurrency
+  <Accordion title="BoutiqueDB vs Raw SQLite3" icon="database">
+    **Raw `sqlite3` C API** offers total control but requires manual memory management, raw SQL string queries, and custom binding handlers.
 
-SQLite in WAL mode allows one writer and multiple readers. Turso adds:
+    **Key Differences**:
+    - **Ergonomics**: BoutiqueDB uses `StructuredQueries` macro models (`@Table`) to generate type-safe SQL queries at compile time.
+    - **Safety**: Raw SQLite C functions easily introduce thread-safety violations and SQL injection risks if not sanitized. BoutiqueDB provides type-safe parameter binding.
+  </Accordion>
+</AccordionGroup>
 
-- `BEGIN CONCURRENT` (MVCC) for optimistic multi-writer transactions with snapshot isolation.
-- `PRAGMA journal_mode = mvcc` for MVCC mode.
-- A multi-process WAL sidecar for sharing a database across process boundaries.
+---
 
-BoutiqueDB uses a dedicated MVCC connection for `concurrentWrites` and falls back to busy-retry immediate transactions if MVCC is unavailable for a given handle.
+## Detailed Feature Matrix
 
-## Feature matrix
+| Feature | BoutiqueDB | GRDB | SwiftData | Raw SQLite3 |
+| :--- | :---: | :---: | :---: | :---: |
+| **Model Definition** | Swift `@Table` Structs | Record Protocols / Structs | `@Model` Classes | Raw C Structs / SQL |
+| **Query Ergonomics** | Type-Safe DSL | Type-Safe Query Interface | `#Predicate` Macros | Raw SQL Strings |
+| **Change Observation** | `@LiveQuery` (CDC) | `ValueObservation` | `@Query` | Manual Triggers |
+| **Thread Isolation** | `DatabaseActor` | `DatabaseQueue` / `DatabasePool` | `ModelActor` | Manual Mutex / WAL |
+| **Encryption** | AEGIS / AES256 | SQLCipher | Data Protection | Custom / SQLCipher |
+| **CloudKit Sync** | `CKSyncEngine` Native | Manual Setup | Built-in | Custom |
 
-| Feature | SQLite | BoutiqueDB engine |
-|---------|--------|-------------------|
-| File format | `.db` | `.db` (same) |
-| SQL dialect | SQLite | SQLite + opt-in extensions |
-| Async I/O | Blocking | `async_io` cooperative |
-| `BEGIN CONCURRENT` / MVCC | No | Yes (opt-in) |
-| Full-text search | FTS5 | Tantivy-backed `USING fts` |
-| Vector search | No | `USING vector` + vector functions |
-| Materialized views | No | Incremental view maintenance (IVM) |
-| Custom types / domains | No | `CREATE TYPE`, `CREATE DOMAIN` |
-| Encryption at rest | SQLCipher-style | `aegis256`, `chacha20poly1305` |
-| Multi-process WAL | No | `.tshm` sidecar |
-
-## C ABI surface
-
-BoutiqueDB uses the `sdk-kit` C ABI (`turso.h`) rather than the `sqlite3.h` compatibility surface. The `sdk-kit` surface exposes:
-
-- Explicit `turso_database_config_t` with `experimental_features`, `async_io`, `vfs`, and encryption fields.
-- Status-driven `step`/`run_io` loops instead of hidden blocking calls.
-- Clear ownership rules for `database`, `connection`, and `statement` handles.
-
-The `sqlite3` surface exists for compatibility but cannot toggle most experimental flags per open.
-
-## Backwards compatibility guarantees
-
-Turso’s compatibility guarantees apply:
-
-1. You can always return to SQLite if you do not use incompatible features.
-2. You can open a SQLite-created database in BoutiqueDB.
-3. Incompatible features are opt-in.
-4. Mixed-engine multi-process access is not supported.
+<Tip>
+**Migrating from GRDB or SQLite**: Because BoutiqueDB databases use standard SQLite-compatible file formats on disk, existing SQLite `.sqlite` files can be opened directly by `BoutiqueDB` without needing data export/import routines!
+</Tip>

@@ -1,105 +1,154 @@
-# Quick start
+---
+title: "Quick Start"
+sidebarTitle: "Quick Start"
+description: "Build a complete reactive Swift application with BoutiqueDB, @Table models, and LiveQuery in 5 minutes."
+---
 
-This guide opens a local database, runs a migration, inserts data, and observes it from SwiftUI.
+Follow this step-by-step guide to get up and running with BoutiqueDB in your Swift app.
 
-## 1. Define a model
+<Steps>
+  <Step title="Define your @Table Model">
+    Create a type-safe database model using `StructuredQueries`. `BoutiqueDB` models map directly to SQLite tables.
 
-```swift
-import BoutiqueDB
-import StructuredQueries
+    ```swift TaskItem.swift
+    import Foundation
+    import BoutiqueDB
+    import StructuredQueries
 
-@Table
-struct Note: Identifiable, Sendable {
-  @Column(primaryKey: true) let id: UUID
-  var title: String
-  var body: String
-  var updatedAt: Date = Date()
-}
-```
-
-## 2. Write a migration plan
-
-```swift
-import BoutiqueDB
-
-enum AppMigrations {
-  static let plan = BoutiqueMigrationPlan {
-    BoutiqueMigration(1) { db in
-      try await db.create(Note.self)
+    @Table
+    struct TaskItem {
+        @Column(primaryKey: true) let id: UUID
+        var title: String
+        var isCompleted: Bool
+        var createdAt: Date
     }
-  }
-}
-```
+    ```
+  </Step>
 
-## 3. Open the database
+  <Step title="Define Database Migrations">
+    BoutiqueDB uses append-only migrations to manage your schema safely over time.
 
-```swift
-import BoutiqueDB
+    ```swift Migrations.swift
+    import BoutiqueDB
 
-let url = try BoutiqueDB.applicationSupportURL()
-let db = try await BoutiqueDB.open(
-  url: url,
-  migrations: AppMigrations.plan
-)
-```
-
-`BoutiqueDB.open` uses the `.tursoEnhanced` open options by default, which enables `views`, `index_method`, `generated_columns`, `vacuum`, and `without_rowid`.
-
-## 4. Read and write
-
-```swift
-try await db.write { conn in
-  try conn.execute(
-    "INSERT INTO notes (id, title, body) VALUES (?, ?, ?)",
-    [.text(UUID().uuidString), .text("Hello"), .text("")]
-  )
-}
-
-let notes = try await db.read { conn in
-  try Note.all.order { $0.updatedAt.desc() }.fetchAll(conn)
-}
-```
-
-## 5. Observe in SwiftUI
-
-```swift
-import SwiftUI
-import BoutiqueDB
-
-@MainActor
-final class NotesModel: Observable {
-  let db = try! BoutiqueDB(
-    url: BoutiqueDB.applicationSupportURL(),
-    migrations: AppMigrations.plan
-  )
-
-  @LiveQuery(db) { Note.all.order { $0.updatedAt.desc() }.asSelect() }
-  var notes: [Note] = []
-
-  func addNote(title: String) async throws {
-    try await db.write { conn in
-      try Note.insert { Note(id: UUID(), title: title, body: "") }
-        .execute(conn)
+    enum AppMigrations {
+        static let plan = MigrationPlan([
+            Migration(name: "v1_create_tasks") { conn in
+                try conn.execute("""
+                    CREATE TABLE task_item (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        title TEXT NOT NULL,
+                        isCompleted INTEGER NOT NULL DEFAULT 0,
+                        createdAt REAL NOT NULL
+                    )
+                """)
+            }
+        ])
     }
-  }
-}
+    ```
+  </Step>
 
-struct NotesView: View {
-  @State private var model = NotesModel()
+  <Step title="Initialize BoutiqueDB Actor">
+    Initialize your database instance on `@MainActor` during app startup.
 
-  var body: some View {
-    List(model.notes) { note in
-      Text(note.title)
+    ```swift AppStore.swift
+    import Foundation
+    import BoutiqueDB
+
+    @MainActor
+    final class AppStore: ObservableObject {
+        let db: BoutiqueDB
+
+        init() {
+            let storeURL = BoutiqueDB.applicationSupportURL().appendingPathComponent("tasks.sqlite")
+            self.db = try! BoutiqueDB.open(
+                url: storeURL,
+                migrations: AppMigrations.plan
+            )
+        }
+
+        func addTask(title: String) async throws {
+            let task = TaskItem(id: UUID(), title: title, isCompleted: false, createdAt: Date())
+            try await db.write { conn in
+                try TaskItem.insert { task }.execute(conn.connection)
+            }
+        }
+
+        func toggleTask(_ task: TaskItem) async throws {
+            try await db.write { conn in
+                try TaskItem.where { $0.id.eq(task.id) }
+                    .update { $0.isCompleted.set(!task.isCompleted) }
+                    .execute(conn.connection)
+            }
+        }
     }
-  }
-}
-```
+    ```
+  </Step>
 
-`@LiveQuery` refreshes automatically when local changes are committed.
+  <Step title="Bind Live Queries to SwiftUI">
+    Use `@LiveQuery` inside your SwiftUI views to receive real-time updates as underlying database rows change.
 
-## Next steps
+    ```swift TaskListView.swift
+    import SwiftUI
+    import BoutiqueDB
+    import StructuredQueries
 
-- [Open options](open-options)
-- [Models and tables](guides/models-and-tables)
-- [Live queries](guides/live-queries)
-- [CloudKit sync](guides/cloudkit-sync)
+    struct TaskListView: View {
+        @StateObject private var store = AppStore()
+        @State private var newTitle = ""
+
+        @ObservationIgnored
+        @LiveQuery var tasks: [TaskItem]
+
+        init() {
+            let store = AppStore()
+            self._store = StateObject(wrappedValue: store)
+            self._tasks = LiveQuery(store.db) {
+                TaskItem.order { $0.createdAt.desc() }.asSelect()
+            }
+        }
+
+        var body: some View {
+            NavigationStack {
+                List {
+                    Section("New Task") {
+                        HStack {
+                            TextField("Task Title", text: $newTitle)
+                            Button("Add") {
+                                Task {
+                                    try? await store.addTask(title: newTitle)
+                                    newTitle = ""
+                                }
+                            }
+                            .disabled(newTitle.isEmpty)
+                        }
+                    }
+
+                    Section("Your Tasks") {
+                        ForEach(tasks, id: \.id) { task in
+                            HStack {
+                                Text(task.title)
+                                Spacer()
+                                Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(task.isCompleted ? .green : .gray)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                Task {
+                                    try? await store.toggleTask(task)
+                                }
+                            }
+                        }
+                    }
+                }
+                .navigationTitle("BoutiqueDB Tasks")
+            }
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+**What's Happening Under the Hood?** When you write to `db.write`, BoutiqueDB records tiny Change Data Capture (CDC) events (`turso_cdc`). `@LiveQuery` listens for CDC change tokens and updates your SwiftUI view instantly (< 250ms latency) without full-table reloads!
+</Tip>
