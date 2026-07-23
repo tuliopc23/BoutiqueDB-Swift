@@ -41,7 +41,7 @@ All notable changes to the **BoutiqueDB** Swift package are documented here.
 
 ### Packaging (SPI-ready)
 - **No `unsafeFlags`:** `Package.swift` uses `binaryTarget` `TursoSDK` (release zip URL + optional local path)
-- GitHub Release asset: `TursoSDK.xcframework.zip` (sdk-kit, macOS arm64 only)
+- GitHub Release asset: `TursoSDK.xcframework.zip` (sdk-kit, multi-arch: macOS arm64/x86_64 + iOS device arm64 + iOS Simulator arm64/x86_64)
 - `Scripts/build-turso-sdk-xcframework.sh` for maintainer/CI builds
 - `LICENSE`, `NOTICE`, `.spi.yml`, `docs/Publishing.md`
 - Public repo: [tuliopc23/BoutiqueDB-Swift](https://github.com/tuliopc23/BoutiqueDB-Swift)
