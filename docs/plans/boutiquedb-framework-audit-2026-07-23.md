@@ -66,7 +66,7 @@ Audit BoutiqueDB-Swift across Swift 6 concurrency, public API ergonomics, Turso-
 
 | # | Severity | Finding | File:line | Action |
 |---|----------|---------|-----------|--------|
-| 4.1 | Critical | Binary target URL may not be publicly accessible. | `Package.swift:20` | Multi-arch `v0.2.1` asset verified (macOS arm64/x86_64, iOS arm64, iOS simulator arm64/x86_64) and checksum matches `tursoSDKChecksum`. Remaining: make repo public before SPI. |
+| 4.1 | Critical | Binary target URL may not be publicly accessible. | `Package.swift:20` | Multi-arch `v0.2.1` asset verified; checksum matches `tursoSDKChecksum`; repo is public. Remaining: add package to SPI and ensure Actions billing is unlocked. |
 | 4.2 | High | SPI OAuth and GitHub Actions billing are still unchecked. | `docs/contributors/publishing.md:25-26` | Complete SPI "Add a Package" OAuth and unlock GitHub Actions billing (`.spi.yml` already has `macos-xcodebuild` and `ios` platforms). |
 | 4.3 | Medium | Consumer example is macOS-only and minimal. | `Examples/Consumer/Package.swift:6`, `Examples/Consumer/Sources/BoutiqueDBConsumer/main.swift` | Add an iOS target and a minimal SwiftUI demo covering `@Table`, `@LiveQuery`, and at least one Turso feature (FTS or vector). |
 | 4.4 | Medium | iOS CI uses a generic simulator destination. | `.github/workflows/swift.yml:116` | Pinned to `platform=iOS Simulator,name=iPhone 16`. |
