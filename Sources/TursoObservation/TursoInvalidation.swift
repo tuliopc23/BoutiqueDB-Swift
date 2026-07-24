@@ -126,11 +126,13 @@ public final class TursoStore {
     }
   }
 
-  private nonisolated static func maxChangeID(on connection: TursoConnection) async throws -> Int64 {
+  private nonisolated static func maxChangeID(on connection: TursoConnection) async throws -> Int64
+  {
     do {
-      return (try await connection.queryOne(
-        "SELECT COALESCE(MAX(change_id), 0) AS m FROM turso_cdc"
-      ))?["m"]?
+      return
+        (try await connection.queryOne(
+          "SELECT COALESCE(MAX(change_id), 0) AS m FROM turso_cdc"
+        ))?["m"]?
         .int64Value ?? 0
     } catch let error as TursoError where error.message.contains("no such table: turso_cdc") {
       return 0

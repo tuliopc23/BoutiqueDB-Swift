@@ -88,10 +88,12 @@ struct ProdReadinessTests {
     defer { try? FileManager.default.removeItem(at: url) }
     enum Expected: Error { case stop }
     let plan = BoutiqueMigrationPlan {
-      BoutiqueMigration("v1", migrate: { connection in
-        try await connection.execute("CREATE TABLE atomic_default (id INTEGER PRIMARY KEY)")
-        throw Expected.stop
-      })
+      BoutiqueMigration(
+        "v1",
+        migrate: { connection in
+          try await connection.execute("CREATE TABLE atomic_default (id INTEGER PRIMARY KEY)")
+          throw Expected.stop
+        })
     }
     let db = try await BoutiqueDB(url: url, startListening: false)
     defer { await db.close() }

@@ -83,9 +83,11 @@ struct MigrationTests {
     _ = try await BoutiqueDB.open(url: url, startListening: false, migrations: v1)
 
     let v2 = BoutiqueMigrationPlan {
-      BoutiqueMigration("v1", migrate: { _ in
-        Issue.record("v1 should not re-run")
-      })
+      BoutiqueMigration(
+        "v1",
+        migrate: { _ in
+          Issue.record("v1 should not re-run")
+        })
       BoutiqueMigration(
         "v2",
         asynchronous: { db in
@@ -204,10 +206,12 @@ struct MigrationTests {
       try? FileManager.default.removeItem(at: url)
     }
     let plan = BoutiqueMigrationPlan {
-      BoutiqueMigration("atomic", migrate: { connection in
-        try await connection.execute("CREATE TABLE atomic_items (id INTEGER PRIMARY KEY)")
-        try await connection.execute("THIS IS NOT SQL")
-      })
+      BoutiqueMigration(
+        "atomic",
+        migrate: { connection in
+          try await connection.execute("CREATE TABLE atomic_items (id INTEGER PRIMARY KEY)")
+          try await connection.execute("THIS IS NOT SQL")
+        })
     }
     await #expect(throws: BoutiqueError.self) {
       try await db.migrate(using: plan)
@@ -219,9 +223,11 @@ struct MigrationTests {
   @Test func appliedMigrationHistoryCannotBeReordered() async throws {
     let url = tempURL()
     let initial = BoutiqueMigrationPlan {
-      BoutiqueMigration("v1", migrate: { connection in
-        try await connection.execute("CREATE TABLE history_items (id INTEGER PRIMARY KEY)")
-      })
+      BoutiqueMigration(
+        "v1",
+        migrate: { connection in
+          try await connection.execute("CREATE TABLE history_items (id INTEGER PRIMARY KEY)")
+        })
       BoutiqueMigration("v2", migrate: { _ in })
     }
     let db = try await BoutiqueDB.open(url: url, startListening: false, migrations: initial)

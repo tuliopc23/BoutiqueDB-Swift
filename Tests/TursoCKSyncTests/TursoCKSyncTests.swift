@@ -282,7 +282,8 @@ struct TursoCKSyncTests {
     try await a.performLocalWrite {
       try await connA.execute("DELETE FROM notes WHERE id = ?", [.text(id)])
     }
-    try await b.applyRemoteDeletion(recordID: CKRecord.ID(recordName: "notes:\(id)", zoneID: b.zoneID))
+    try await b.applyRemoteDeletion(
+      recordID: CKRecord.ID(recordName: "notes:\(id)", zoneID: b.zoneID))
     #expect(try await connB.query("SELECT * FROM notes WHERE id = ?", [.text(id)]).isEmpty)
   }
 

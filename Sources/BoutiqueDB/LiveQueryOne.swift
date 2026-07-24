@@ -27,7 +27,8 @@ where Element == Element.QueryOutput {
   @ObservationIgnored nonisolated(unsafe) private var refreshTask: Task<Void, Never>?
   @ObservationIgnored private var queryRevision: UInt64 = 0
   @ObservationIgnored private var loadRevision: UInt64 = 0
-  @ObservationIgnored private var loadContinuations: [UInt64: CheckedContinuation<Void, Never>] = [:]
+  @ObservationIgnored private var loadContinuations: [UInt64: CheckedContinuation<Void, Never>] =
+    [:]
 
   public init(
     wrappedValue: Element? = nil,

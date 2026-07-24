@@ -54,7 +54,8 @@ struct BoutiqueDBTests {
     }
 
     try await db.write { conn in
-      try await Note.insert { Note(id: "n1", title: "Hello", body: "World") }.execute(conn.connection)
+      try await Note.insert { Note(id: "n1", title: "Hello", body: "World") }.execute(
+        conn.connection)
     }
 
     let all = try await db.fetchAll(Note.self)

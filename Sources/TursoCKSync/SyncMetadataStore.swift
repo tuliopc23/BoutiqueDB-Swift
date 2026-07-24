@@ -88,9 +88,10 @@ public struct SyncMetadataStore: Sendable {
 
   public func loadStateSerialization() async throws -> CKSyncEngine.State.Serialization? {
     guard
-      let data = try await connection.queryOne("SELECT state_blob FROM ck_sync_state WHERE id = 1")?[
-        "state_blob"
-      ]?.dataValue
+      let data = try await connection.queryOne(
+        "SELECT state_blob FROM ck_sync_state WHERE id = 1")?[
+          "state_blob"
+        ]?.dataValue
     else { return nil }
     return try JSONDecoder().decode(CKSyncEngine.State.Serialization.self, from: data)
   }
@@ -132,7 +133,8 @@ public struct SyncMetadataStore: Sendable {
     )
   }
 
-  func stagePendingChanges(_ changes: [DurablePendingChange], through changeID: Int64) async throws {
+  func stagePendingChanges(_ changes: [DurablePendingChange], through changeID: Int64) async throws
+  {
     try await connection.writeAsync { @Sendable in
       try await stagePendingChangesInCurrentTransaction(changes, through: changeID)
     }
@@ -339,7 +341,9 @@ public struct SyncMetadataStore: Sendable {
     ]?.int64Value ?? 1
   }
 
-  public func saveFormatVersion(_ version: Int64 = SyncMetadataStore.currentFormatVersion) async throws {
+  public func saveFormatVersion(_ version: Int64 = SyncMetadataStore.currentFormatVersion)
+    async throws
+  {
     try await connection.execute(
       """
       INSERT INTO ck_meta_version (id, format_version, updated_at)

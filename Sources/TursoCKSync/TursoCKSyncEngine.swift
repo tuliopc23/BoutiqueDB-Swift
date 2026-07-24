@@ -93,13 +93,13 @@ public final actor TursoCKSyncEngine {
       publishStatus(.idle)
       return
     }
-    
+
     guard syncEngine == nil else {
-      
+
       return
     }
     guard let container else {
-      
+
       throw TursoError(code: -1, message: "Missing CKContainer")
     }
 
@@ -107,7 +107,7 @@ public final actor TursoCKSyncEngine {
     do {
       state = try await metadata.loadStateSerialization()
     } catch {
-      
+
       throw error
     }
     var config = CKSyncEngine.Configuration(
@@ -118,7 +118,6 @@ public final actor TursoCKSyncEngine {
     config.automaticallySync = automaticallySync
     let engine = CKSyncEngine(config)
     self.syncEngine = engine
-    
 
     if state == nil {
       engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
@@ -131,10 +130,10 @@ public final actor TursoCKSyncEngine {
 
   /// Tears down the CloudKit engine (local pending queue is retained for tests).
   public func stop() {
-    
+
     syncEngine = nil
     stopped = true
-    
+
     publishStatus(.idle)
   }
 
@@ -184,7 +183,6 @@ public final actor TursoCKSyncEngine {
   }
 
   public func requireEngine() async throws -> CKSyncEngine {
-    
 
     guard let syncEngine else {
       throw TursoError(code: -1, message: "Call start() before using the sync engine")
@@ -230,7 +228,6 @@ public final actor TursoCKSyncEngine {
   }
 
   private func enqueuePending(_ pending: [CKSyncEngine.PendingRecordZoneChange]) {
-    
 
     for change in pending {
       let recordID: CKRecord.ID
@@ -331,7 +328,8 @@ public final actor TursoCKSyncEngine {
 
   private func validateDatabaseSchema() async throws {
     for table in configuration.syncedTables {
-      let columns = try await connection.query("PRAGMA table_info(\(RowSQL.quoteIdent(table.name)))")
+      let columns = try await connection.query(
+        "PRAGMA table_info(\(RowSQL.quoteIdent(table.name)))")
       guard !columns.isEmpty else {
         throw TursoCKSyncError.tableNotFound(table.name)
       }
@@ -375,7 +373,8 @@ public final actor TursoCKSyncEngine {
         throw TursoCKSyncError.autoIncrementPrimaryKeyUnsupported(table: table.name)
       }
 
-      let indexes = try await connection.query("PRAGMA index_list(\(RowSQL.quoteIdent(table.name)))")
+      let indexes = try await connection.query(
+        "PRAGMA index_list(\(RowSQL.quoteIdent(table.name)))")
       for index in indexes
       where index["unique"]?.int64Value == 1
         && index["origin"]?.stringValue != "pk"
@@ -596,15 +595,16 @@ public final actor TursoCKSyncEngine {
     try await connection.withSynchronizingFlag { @Sendable in
       try await connection.writeAsync { @Sendable in
         if !preserveLocalUserData {
-          try await RowSQL.deleteAllSyncedData(connection: connection, tables: configuration.syncedTables)
+          try await RowSQL.deleteAllSyncedData(
+            connection: connection, tables: configuration.syncedTables)
         }
         try await metadata.wipeAll()
       }
     }
-    
+
     syncEngine = nil
     localPendingRecordZoneChanges = []
-    
+
     try await start()
     if preserveLocalUserData {
       try await enqueueAllLocalRows()
@@ -693,7 +693,7 @@ public final actor TursoCKSyncEngine {
     let alternatives: [CKSyncEngine.PendingRecordZoneChange] = [
       .saveRecord(recordID), .deleteRecord(recordID),
     ]
-    
+
     if let engine = engine ?? syncEngine {
       engine.state.remove(pendingRecordZoneChanges: alternatives)
     }
@@ -703,7 +703,7 @@ public final actor TursoCKSyncEngine {
       @unknown default: return false
       }
     }
-    
+
   }
 
   func acknowledgePendingChangeForTesting(recordID: CKRecord.ID) async throws {
@@ -775,7 +775,9 @@ public final actor TursoCKSyncEngine {
     return fallback.isEmpty ? nil : fallback
   }
 
-  private func decodeCDCPayload(table: SyncedTable, blob: Data?) async throws -> [String: TursoValue]? {
+  private func decodeCDCPayload(table: SyncedTable, blob: Data?) async throws -> [String:
+    TursoValue]?
+  {
     guard let blob, !blob.isEmpty else { return nil }
     let rows = try await connection.query(
       """
@@ -828,9 +830,9 @@ public final actor TursoCKSyncEngine {
 
   private func publishStatus(_ status: SyncStatus) {
     let sink: (@Sendable (SyncStatus) -> Void)?
-    
+
     sink = _statusSink
-    
+
     sink?(status)
   }
 }

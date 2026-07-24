@@ -80,7 +80,8 @@ extension SelectStatement where QueryValue == (), Joins == () {
   }
 }
 
-extension SelectStatement where QueryValue == (), From: PrimaryKeyedTable, Joins == (), From.QueryOutput: Sendable {
+extension SelectStatement
+where QueryValue == (), From: PrimaryKeyedTable, Joins == (), From.QueryOutput: Sendable {
   public func find(
     _ db: TursoConnection,
     key primaryKey: some QueryExpression<From.PrimaryKey>
@@ -93,7 +94,9 @@ extension SelectStatement where QueryValue == (), From: PrimaryKeyedTable, Joins
 }
 
 extension TursoConnection {
-  func run<T: Sendable>(query: QueryFragment, body: (TursoStatement) throws -> sending T) throws -> sending T {
+  func run<T: Sendable>(query: QueryFragment, body: (TursoStatement) throws -> sending T) throws
+    -> sending T
+  {
     guard !query.isEmpty else {
       throw TursoError(code: -1, message: "Empty query fragment")
     }
