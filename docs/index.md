@@ -5,8 +5,8 @@ description: "Local-first persistence for iOS and macOS built on the Turso datab
 mode: "custom"
 ---
 
-<div className="hero-container">
-  <img src="/icon.png" alt="BoutiqueDB icon" className="hero-icon" />
+<div className="hero-container not-prose">
+  <img src="/icon.png" alt="BoutiqueDB" className="hero-icon" />
   <h1 className="hero-title">BoutiqueDB for Swift</h1>
   <p className="hero-subtitle">
     Local-first Swift persistence on the Turso engine. SQLiteData-style DX, CDC <code className="hero-code">LiveQuery</code>, CloudKit sync, and official Turso features — all inside your app sandbox.
@@ -37,6 +37,24 @@ mode: "custom"
 
 ---
 
+<h2 className="section-heading">Get started in three steps</h2>
+
+<Steps>
+  <Step title="Add BoutiqueDB" icon="plus">
+    Add `https://github.com/tuliopc23/BoutiqueDB-Swift` to your Xcode project, Swift Package Manager, or `Package.swift`.
+  </Step>
+
+  <Step title="Define a model" icon="table">
+    Annotate a Swift struct with `@Table` and `@Column`, then add it to a migration.
+  </Step>
+
+  <Step title="Run a LiveQuery" icon="bolt">
+    Use `@LiveQuery` in a SwiftUI view to get reactive, CDC-backed updates without manual `onChange`.
+  </Step>
+</Steps>
+
+---
+
 <h2 className="section-heading">Quick Example</h2>
 
 Define your `@Table` model, initialize the database actor, and run reactive queries inside SwiftUI:
@@ -63,14 +81,14 @@ import BoutiqueDB
 @main
 struct NotesApp: App {
     let db: BoutiqueDB
-    
+
     init() {
         self.db = try! BoutiqueDB.open(
             url: BoutiqueDB.applicationSupportURL(),
             migrations: AppMigrations.plan
         )
     }
-    
+
     var body: some Scene {
         WindowGroup {
             ContentView(db: db)
@@ -86,15 +104,15 @@ import StructuredQueries
 
 struct ContentView: View {
     let db: BoutiqueDB
-    
+
     @ObservationIgnored
     @LiveQuery var notes: [Note]
-    
+
     init(db: BoutiqueDB) {
         self.db = db
         self._notes = LiveQuery(db) { Note.order { $0.title }.asSelect() }
     }
-    
+
     var body: some View {
         List(notes, id: \.id) { note in
             VStack(alignment: .leading) {
@@ -125,7 +143,7 @@ struct ContentView: View {
 
 ---
 
-<h2 className="section-heading">Explore the Documentation</h2>
+<h2 className="section-heading">Explore the documentation</h2>
 
 <CardGroup cols={3}>
   <Card title="Quick Start" icon="rocket" href="/getting-started/quick-start">
