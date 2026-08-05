@@ -2,11 +2,18 @@
   "$schema": "https://mintlify.com/docs.json",
   "name": "BoutiqueDB",
   "description": "Local-first Swift persistence for iOS and macOS — built on the Turso engine with CloudKit sync, CDC live queries, and modern Swift concurrency.",
-  "theme": "mint",
+  "theme": "maple",
   "colors": {
     "primary": "#0EA5E9",
     "light": "#38BDF8",
     "dark": "#0284C7"
+  },
+  "background": {
+    "decoration": "gradient",
+    "color": {
+      "light": "#FAFAF9",
+      "dark": "#0B0F19"
+    }
   },
   "appearance": {
     "default": "system",
@@ -226,14 +233,14 @@
       "twitter:card": "summary_large_image",
       "description": "Local-first Swift persistence for iOS and macOS — built on the Turso engine with CloudKit sync, CDC live queries, and modern Swift concurrency.",
       "og:description": "Local-first Swift persistence for iOS and macOS — built on the Turso engine with CloudKit sync, CDC live queries, and modern Swift concurrency.",
-      "og:image": "https://raw.githubusercontent.com/tuliopc23/BoutiqueDB-Swift/main/docs/icon.png",
+      "og:image": "https://boutiquedb.mintlify.app/icon.png",
       "og:url": "https://boutiquedb.mintlify.app",
       "og:title": "BoutiqueDB for Swift"
     },
     "organization": {
       "name": "BoutiqueDB",
       "url": "https://github.com/tuliopc23/BoutiqueDB-Swift",
-      "logo": "https://raw.githubusercontent.com/tuliopc23/BoutiqueDB-Swift/main/docs/logo/light.png"
+      "logo": "https://boutiquedb.mintlify.app/logo/light.png"
     }
   },
   "metadata": {
