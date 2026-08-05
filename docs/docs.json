@@ -227,7 +227,7 @@
       "description": "Local-first Swift persistence for iOS and macOS — built on the Turso engine with CloudKit sync, CDC live queries, and modern Swift concurrency.",
       "og:description": "Local-first Swift persistence for iOS and macOS — built on the Turso engine with CloudKit sync, CDC live queries, and modern Swift concurrency.",
       "og:image": "https://raw.githubusercontent.com/tuliopc23/BoutiqueDB-Swift/main/docs/icon.png",
-      "og:url": "https://liquidify.mintlify.app",
+      "og:url": "https://boutiquedb.mintlify.app",
       "og:title": "BoutiqueDB for Swift"
     },
     "organization": {
