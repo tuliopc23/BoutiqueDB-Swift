@@ -4,15 +4,15 @@
   "description": "Local-first Swift persistence for iOS and macOS — built on the Turso engine with CloudKit sync, CDC live queries, and modern Swift concurrency.",
   "theme": "maple",
   "colors": {
-    "primary": "#0EA5E9",
-    "light": "#38BDF8",
-    "dark": "#0284C7"
+    "primary": "#FF6B4A",
+    "light": "#FF9B7A",
+    "dark": "#C2412A"
   },
   "background": {
     "decoration": "gradient",
     "color": {
-      "light": "#FAFAF9",
-      "dark": "#0B0F19"
+      "light": "#FDF8F5",
+      "dark": "#0B1220"
     }
   },
   "appearance": {
@@ -22,7 +22,8 @@
   "fonts": {
     "family": "Inter",
     "heading": {
-      "family": "Space Grotesk"
+      "family": "Inter",
+      "weight": 600
     },
     "body": {
       "family": "Inter"
@@ -250,7 +251,7 @@
     "appearance": "light",
     "background": "/icon.png",
     "fonts": {
-      "family": "Space Grotesk"
+      "family": "Inter"
     }
   },
   "styling": {
