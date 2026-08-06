@@ -1,3 +1,9 @@
+---
+title: "Engine Architecture"
+sidebarTitle: "Engine Architecture"
+description: "How the embedded Turso engine, Swift bindings, and database actor fit together."
+---
+
 # Engine architecture
 
 The BoutiqueDB engine is a Rust rewrite of SQLite. It keeps the SQLite file format and SQL dialect but replaces the query execution, storage, and I/O layers with Rust code.

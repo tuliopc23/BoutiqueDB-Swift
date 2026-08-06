@@ -1,3 +1,9 @@
+---
+title: "Synchronization Protocol"
+sidebarTitle: "Sync Protocol"
+description: "The record, token, conflict, and transport model used by BoutiqueDB synchronization."
+---
+
 # Sync protocol
 
 The engine includes a sync engine (`sync/engine`) that can replicate a SQLite-compatible database between a client and a server. The protocol is used by `sync/sdk-kit` and exposed through `turso_sync.h`.

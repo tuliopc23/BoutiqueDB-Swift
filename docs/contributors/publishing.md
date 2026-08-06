@@ -1,3 +1,9 @@
+---
+title: "Publishing Releases"
+sidebarTitle: "Publishing"
+description: "Prepare, validate, tag, and publish BoutiqueDB releases and package artifacts."
+---
+
 # Publishing BoutiqueDB (SPI / GitHub)
 
 ## Permanent rule: iOS + macOS
