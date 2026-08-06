@@ -3,6 +3,7 @@ title: "BoutiqueDB for Swift"
 sidebarTitle: "Overview"
 description: "Local-first persistence for iOS and macOS built on the Turso database engine with CloudKit sync, CDC live queries, and modern Swift concurrency."
 mode: "custom"
+hidden: true
 ---
 
 <div className="hero-container not-prose">
