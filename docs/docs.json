@@ -46,49 +46,6 @@
           {
             "group": "Getting Started",
             "icon": "rocket",
-            "pages": [
-              "getting-started/quick-start",
-              "getting-started/installation",
-              "getting-started/open-options"
-            ]
-          },
-          {
-            "group": "Fundamentals",
-            "icon": "layer-group",
-            "pages": [
-              "core-concepts",
-              "stack",
-              "why-boutiquedb",
-              "sqlite-comparison",
-              "sync-overview"
-            ]
-          },
-          {
-            "group": "Swift & SwiftUI",
-            "icon": "mobile-screen-button",
-            "pages": [
-              "swiftui-integration",
-              "guides/models-and-tables",
-              "guides/live-queries",
-              "guides/migrations",
-              "best-practices",
-              "performance-tuning"
-            ]
-          },
-          {
-            "group": "Turso & CloudKit Engine",
-            "icon": "cloud-arrow-up",
-            "pages": [
-              "guides/cloudkit-sync",
-              "turso-features-in-apple-apps",
-              "guides/fts-and-vector",
-              "guides/concurrency",
-              "guides/testing"
-            ]
-          },
-          {
-            "group": "Getting Started",
-            "icon": "rocket",
             "expanded": true,
             "pages": [
               "getting-started/quick-start",
@@ -101,7 +58,6 @@
             "icon": "layer-group",
             "expanded": true,
             "pages": [
-              "index",
               "core-concepts",
               "stack",
               "why-boutiquedb",
@@ -138,38 +94,6 @@
       {
         "tab": "Architecture",
         "groups": [
-          {
-            "group": "Deep Dives",
-            "icon": "diagram-project",
-            "pages": [
-              "advanced/boutiquedb-architecture",
-              "advanced/engine-architecture",
-              "advanced/sdk-kit-c-abi",
-              "advanced/sync-protocol",
-              "advanced/experimental-features"
-            ]
-          },
-          {
-            "group": "Package Contributors",
-            "icon": "code-branch",
-            "pages": [
-              "contributors/build-engine",
-              "contributors/multi-arch-packaging",
-              "contributors/spi-checklist",
-              "contributors/testing",
-              "contributors/cloudkit-qa-checklist",
-              "contributors/publishing",
-              "contributors/sync-benchmarks"
-            ]
-          },
-          {
-            "group": "AI & Agent Integration",
-            "icon": "robot",
-            "pages": [
-              "agent-cookbook",
-              "skills"
-            ]
-          },
           {
             "group": "Deep Dives",
             "icon": "diagram-project",
@@ -246,31 +170,6 @@
           {
             "label": "Architecture",
             "href": "/advanced/boutiquedb-architecture"
-          },
-          {
-            "label": "Architecture",
-            "href": "/advanced/boutiquedb-architecture"
-          }
-        ]
-      },
-      {
-        "header": "Engine",
-        "items": [
-          {
-            "label": "Turso Features",
-            "href": "/turso-features-in-apple-apps"
-          },
-          {
-            "label": "CloudKit Sync",
-            "href": "/guides/cloudkit-sync"
-          },
-          {
-            "label": "Live Queries",
-            "href": "/guides/live-queries"
-          },
-          {
-            "label": "Performance",
-            "href": "/performance-tuning"
           }
         ]
       },
@@ -309,10 +208,6 @@
           {
             "label": "Contributor Guide",
             "href": "/contributors/build-engine"
-          },
-          {
-            "label": "Publishing",
-            "href": "/contributors/publishing"
           },
           {
             "label": "Publishing",
