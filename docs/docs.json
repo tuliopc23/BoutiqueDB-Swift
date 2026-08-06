@@ -42,11 +42,88 @@
     "tabs": [
       {
         "tab": "Docs",
-        "href": "/getting-started/quick-start"
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "rocket",
+            "pages": [
+              "getting-started/quick-start",
+              "getting-started/installation",
+              "getting-started/open-options"
+            ]
+          },
+          {
+            "group": "Fundamentals",
+            "icon": "layer-group",
+            "pages": [
+              "core-concepts",
+              "stack",
+              "why-boutiquedb",
+              "sqlite-comparison",
+              "sync-overview"
+            ]
+          },
+          {
+            "group": "Swift & SwiftUI",
+            "icon": "mobile-screen-button",
+            "pages": [
+              "swiftui-integration",
+              "guides/models-and-tables",
+              "guides/live-queries",
+              "guides/migrations",
+              "best-practices",
+              "performance-tuning"
+            ]
+          },
+          {
+            "group": "Turso & CloudKit Engine",
+            "icon": "cloud-arrow-up",
+            "pages": [
+              "guides/cloudkit-sync",
+              "turso-features-in-apple-apps",
+              "guides/fts-and-vector",
+              "guides/concurrency",
+              "guides/testing"
+            ]
+          }
+        ]
       },
       {
         "tab": "Architecture",
-        "href": "/advanced/boutiquedb-architecture"
+        "groups": [
+          {
+            "group": "Deep Dives",
+            "icon": "diagram-project",
+            "pages": [
+              "advanced/boutiquedb-architecture",
+              "advanced/engine-architecture",
+              "advanced/sdk-kit-c-abi",
+              "advanced/sync-protocol",
+              "advanced/experimental-features"
+            ]
+          },
+          {
+            "group": "Package Contributors",
+            "icon": "code-branch",
+            "pages": [
+              "contributors/build-engine",
+              "contributors/multi-arch-packaging",
+              "contributors/spi-checklist",
+              "contributors/testing",
+              "contributors/cloudkit-qa-checklist",
+              "contributors/publishing",
+              "contributors/sync-benchmarks"
+            ]
+          },
+          {
+            "group": "AI & Agent Integration",
+            "icon": "robot",
+            "pages": [
+              "agent-cookbook",
+              "skills"
+            ]
+          }
+        ]
       }
     ]
   },
@@ -73,7 +150,7 @@
     },
     "links": [
       {
-        "header": "Product",
+        "header": "Documentation",
         "items": [
           {
             "label": "Quick Start",
@@ -88,13 +165,34 @@
             "href": "/swiftui-integration"
           },
           {
-            "label": "Turso Features",
-            "href": "/turso-features-in-apple-apps"
+            "label": "Architecture",
+            "href": "/advanced/boutiquedb-architecture"
           }
         ]
       },
       {
-        "header": "Resources",
+        "header": "Engine",
+        "items": [
+          {
+            "label": "Turso Features",
+            "href": "/turso-features-in-apple-apps"
+          },
+          {
+            "label": "CloudKit Sync",
+            "href": "/guides/cloudkit-sync"
+          },
+          {
+            "label": "Live Queries",
+            "href": "/guides/live-queries"
+          },
+          {
+            "label": "Performance",
+            "href": "/performance-tuning"
+          }
+        ]
+      },
+      {
+        "header": "Project",
         "items": [
           {
             "label": "GitHub",
@@ -105,25 +203,8 @@
             "href": "https://swiftpackageindex.com/tuliopc23/BoutiqueDB-Swift"
           },
           {
-            "label": "Contributors",
+            "label": "Contributor Guide",
             "href": "/contributors/build-engine"
-          }
-        ]
-      },
-      {
-        "header": "Contribute",
-        "items": [
-          {
-            "label": "Build Engine",
-            "href": "/contributors/build-engine"
-          },
-          {
-            "label": "Multi-Arch Packaging",
-            "href": "/contributors/multi-arch-packaging"
-          },
-          {
-            "label": "Testing",
-            "href": "/contributors/testing"
           },
           {
             "label": "Publishing",
@@ -189,7 +270,7 @@
     "404": {
       "redirect": true,
       "title": "Page not found",
-      "description": "That page doesn't exist — head back to the overview."
+      "description": "That page doesn't exist — head back to the BoutiqueDB overview."
     }
   }
 }
