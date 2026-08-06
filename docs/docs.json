@@ -246,6 +246,31 @@
           {
             "label": "Architecture",
             "href": "/advanced/boutiquedb-architecture"
+          },
+          {
+            "label": "Architecture",
+            "href": "/advanced/boutiquedb-architecture"
+          }
+        ]
+      },
+      {
+        "header": "Engine",
+        "items": [
+          {
+            "label": "Turso Features",
+            "href": "/turso-features-in-apple-apps"
+          },
+          {
+            "label": "CloudKit Sync",
+            "href": "/guides/cloudkit-sync"
+          },
+          {
+            "label": "Live Queries",
+            "href": "/guides/live-queries"
+          },
+          {
+            "label": "Performance",
+            "href": "/performance-tuning"
           }
         ]
       },
@@ -284,6 +309,10 @@
           {
             "label": "Contributor Guide",
             "href": "/contributors/build-engine"
+          },
+          {
+            "label": "Publishing",
+            "href": "/contributors/publishing"
           },
           {
             "label": "Publishing",
