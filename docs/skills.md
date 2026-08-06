@@ -1,3 +1,9 @@
+---
+title: "Agent Skills"
+sidebarTitle: "Agent Skills"
+description: "Reusable instructions and constraints for coding agents working with BoutiqueDB."
+---
+
 # Agent skills
 
 BoutiqueDB ships installable agent skills through [skills.sh](https://skills.sh/). Each skill packages the knowledge from these docs for agent-assisted workflows.

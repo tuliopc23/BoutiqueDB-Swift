@@ -1,3 +1,9 @@
+---
+title: "CloudKit QA Checklist"
+sidebarTitle: "CloudKit QA"
+description: "Validate CloudKit synchronization behavior across devices, accounts, offline transitions, and conflicts."
+---
+
 # CloudKit Sync — Manual QA Checklist
 
 Use this for release candidates. Automated tests cover the offline path (`enablesCloudKit: false`). Live CloudKit requires a signed iCloud account and app entitlements.
