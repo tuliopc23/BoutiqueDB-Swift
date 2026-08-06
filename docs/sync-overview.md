@@ -1,3 +1,9 @@
+---
+title: "Synchronization Overview"
+sidebarTitle: "Sync Overview"
+description: "How BoutiqueDB keeps local data authoritative while optionally synchronizing through CloudKit."
+---
+
 # Sync possibilities
 
 BoutiqueDB separates persistence from sync. The local database is always authoritative while the app is offline; sync adapters move changes to and from a remote store when connectivity is available.

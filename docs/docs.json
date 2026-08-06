@@ -1,18 +1,18 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "name": "BoutiqueDB",
-  "description": "Local-first Swift persistence for iOS and macOS — built on the Turso engine with CloudKit sync, CDC live queries, and modern Swift concurrency.",
-  "theme": "maple",
+  "description": "The local-first database for Swift apps — reactive queries, CloudKit synchronization, and Turso-powered capabilities in a native Swift package.",
+  "theme": "aspen",
   "colors": {
     "primary": "#F25F3A",
     "light": "#FF9B7A",
-    "dark": "#0B1220"
+    "dark": "#C9432B"
   },
   "background": {
-    "decoration": "gradient",
+    "decoration": "grid",
     "color": {
-      "light": "#FAFAF8",
-      "dark": "#0B1220"
+      "light": "#F7F6F2",
+      "dark": "#07101E"
     }
   },
   "appearance": {
@@ -41,90 +41,12 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Documentation",
-        "groups": [
-          {
-            "group": "Overview",
-            "icon": "house",
-            "pages": [
-              "index",
-              "core-concepts",
-              "stack",
-              "why-boutiquedb",
-              "sqlite-comparison",
-              "sync-overview"
-            ]
-          },
-          {
-            "group": "Getting Started",
-            "icon": "rocket",
-            "pages": [
-              "getting-started/installation",
-              "getting-started/quick-start",
-              "getting-started/open-options"
-            ]
-          },
-          {
-            "group": "Swift & SwiftUI Integration",
-            "icon": "mobile",
-            "pages": [
-              "swiftui-integration",
-              "guides/models-and-tables",
-              "guides/live-queries",
-              "guides/migrations",
-              "best-practices",
-              "performance-tuning"
-            ]
-          },
-          {
-            "group": "Turso & CloudKit Engine",
-            "icon": "cloud-arrow-up",
-            "pages": [
-              "guides/cloudkit-sync",
-              "turso-features-in-apple-apps",
-              "guides/fts-and-vector",
-              "guides/concurrency",
-              "guides/testing"
-            ]
-          }
-        ]
+        "tab": "Docs",
+        "href": "/getting-started/quick-start"
       },
       {
-        "tab": "Architecture & Specs",
-        "groups": [
-          {
-            "group": "Deep Dives",
-            "icon": "diagram-project",
-            "pages": [
-              "advanced/boutiquedb-architecture",
-              "advanced/engine-architecture",
-              "advanced/sdk-kit-c-abi",
-              "advanced/sync-protocol",
-              "advanced/experimental-features"
-            ]
-          },
-          {
-            "group": "Package Contributors",
-            "icon": "code-branch",
-            "pages": [
-              "contributors/build-engine",
-              "contributors/multi-arch-packaging",
-              "contributors/spi-checklist",
-              "contributors/testing",
-              "contributors/cloudkit-qa-checklist",
-              "contributors/publishing",
-              "contributors/sync-benchmarks"
-            ]
-          },
-          {
-            "group": "AI & Agent Integration",
-            "icon": "robot",
-            "pages": [
-              "agent-cookbook",
-              "skills"
-            ]
-          }
-        ]
+        "tab": "Architecture",
+        "href": "/advanced/boutiquedb-architecture"
       }
     ]
   },
@@ -141,7 +63,7 @@
     ],
     "primary": {
       "type": "button",
-      "label": "Quick Start",
+      "label": "Get Started",
       "href": "/getting-started/quick-start"
     }
   },
@@ -212,7 +134,7 @@
     ]
   },
   "search": {
-    "prompt": "Search docs, guides, and architecture..."
+    "prompt": "Search BoutiqueDB docs, guides, and architecture..."
   },
   "contextual": {
     "options": [
@@ -230,10 +152,10 @@
   "seo": {
     "indexing": "all",
     "metatags": {
-      "og:site_name": "BoutiqueDB Docs",
+      "og:site_name": "BoutiqueDB",
       "twitter:card": "summary_large_image",
-      "description": "Local-first Swift persistence for iOS and macOS — built on the Turso engine with CloudKit sync, CDC live queries, and modern Swift concurrency.",
-      "og:description": "Local-first Swift persistence for iOS and macOS — built on the Turso engine with CloudKit sync, CDC live queries, and modern Swift concurrency.",
+      "description": "The local-first database for Swift apps — reactive queries, CloudKit synchronization, and Turso-powered capabilities in a native Swift package.",
+      "og:description": "The local-first database for Swift apps — reactive queries, CloudKit synchronization, and Turso-powered capabilities in a native Swift package.",
       "og:image": "https://boutiquedb.mintlify.app/icon.png",
       "og:url": "https://boutiquedb.mintlify.app",
       "og:title": "BoutiqueDB for Swift"
@@ -245,7 +167,7 @@
     }
   },
   "metadata": {
-    "timestamp": true
+    "timestamp": false
   },
   "thumbnails": {
     "appearance": "light",
@@ -255,7 +177,7 @@
     }
   },
   "styling": {
-    "eyebrows": "section",
+    "eyebrows": "breadcrumbs",
     "codeblocks": {
       "theme": {
         "light": "github-light",
