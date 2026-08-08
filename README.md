@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://boutiquedb.mintlify.app"><img src="https://img.shields.io/badge/docs-boutiquedb.mintlify.app-000000?style=flat&logo=mintlify&logoColor=white" alt="Documentation" /></a>
   <a href="https://swiftpackageindex.com/tuliopc23/BoutiqueDB-Swift"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Ftuliopc23%2FBoutiqueDB-Swift%2Fbadge%3Ftype%3Dswift-versions" alt="Swift versions" /></a>
   <a href="https://swiftpackageindex.com/tuliopc23/BoutiqueDB-Swift"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Ftuliopc23%2FBoutiqueDB-Swift%2Fbadge%3Ftype%3Dplatforms" alt="Platforms" /></a>
   <img src="https://img.shields.io/badge/Swift-6.1-orange" alt="Swift" />
@@ -124,7 +125,7 @@ let db = try BoutiqueDB(url: url, openOptions: .tursoEnhancedAsync)
 
 ## Docs (prod-ready)
 
-The `docs/` directory is the source for both Mintlify and GitBook.
+Official documentation portal: **[boutiquedb.mintlify.app](https://boutiquedb.mintlify.app)** (source files maintained in `docs/`).
 
 | Doc | Topic |
 |-----|--------|
