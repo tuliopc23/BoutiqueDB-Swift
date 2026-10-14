@@ -1,3 +1,9 @@
+---
+title: "Experimental Features"
+sidebarTitle: "Experimental Features"
+description: "Preview engine capabilities and APIs that are not yet part of BoutiqueDB's stable surface."
+---
+
 # Experimental features
 
 The Turso engine exposes several opt-in features. BoutiqueDB surfaces them through `TursoOpenOptions` and probes them through `db.capabilities`.

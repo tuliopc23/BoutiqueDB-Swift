@@ -1,3 +1,9 @@
+---
+title: "Synchronization Benchmarks"
+sidebarTitle: "Sync Benchmarks"
+description: "Measure synchronization throughput, latency, batching, and database impact across representative workloads."
+---
+
 # Sync & Turso performance benchmarks
 
 Track these on a release branch before tagging. Use a Release build of the host app or a dedicated benchmark target (never `--release` for the Rust engine rebuild unless CI requires it).

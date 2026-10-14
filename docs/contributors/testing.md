@@ -1,3 +1,9 @@
+---
+title: "Contributor Testing"
+sidebarTitle: "Contributor Testing"
+description: "Run the package, engine, synchronization, and integration test suites when contributing to BoutiqueDB."
+---
+
 # Testing (contributors)
 
 This guide covers the validation gates to run before opening a pull request or tagging a release.

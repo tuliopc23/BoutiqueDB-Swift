@@ -1,3 +1,9 @@
+---
+title: "Multi-Architecture Packaging"
+sidebarTitle: "Multi-Arch Packaging"
+description: "Build and package BoutiqueDB's engine binaries for Apple device and simulator architectures."
+---
+
 # Multi-arch packaging
 
 Public and Swift Package Index (SPI) releases of BoutiqueDB must include a universal, multi-arch `TursoSDK.xcframework`. Single-slice builds are only for local debugging.

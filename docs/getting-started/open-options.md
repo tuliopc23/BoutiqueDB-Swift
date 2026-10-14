@@ -1,3 +1,9 @@
+---
+title: "Database Open Options"
+sidebarTitle: "Open Options"
+description: "Configure database locations, migrations, encryption, concurrency, and runtime behavior when opening BoutiqueDB."
+---
+
 # Turso open options (official sdk-kit path)
 
 BoutiqueDB opens the engine through Turso’s **language-binding C ABI** (`sdk-kit` / `turso.h`), not the limited sqlite3-compat experimental toggle.

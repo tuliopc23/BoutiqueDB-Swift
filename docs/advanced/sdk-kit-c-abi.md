@@ -1,3 +1,9 @@
+---
+title: "SDK Kit C ABI"
+sidebarTitle: "SDK Kit C ABI"
+description: "The stable C boundary used by BoutiqueDB to call into the embedded database engine."
+---
+
 # SDK-kit C ABI
 
 BoutiqueDB links the engine through the `sdk-kit` C ABI (`turso.h`). This is the official surface for building language bindings, and it is the only surface that exposes `async_io`, per-open experimental features, and encryption.

@@ -1,3 +1,9 @@
+---
+title: "Technology Stack"
+sidebarTitle: "Technology Stack"
+description: "The Swift, Turso, Structured Queries, CloudKit, and concurrency layers that make up BoutiqueDB."
+---
+
 # Stack
 
 BoutiqueDB is a thin, layered Swift package over a vendored Turso engine binary. The layers are intentionally narrow so that each can be replaced or tested in isolation.
